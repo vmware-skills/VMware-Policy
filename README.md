@@ -1,5 +1,9 @@
 # VMware Policy
 
+> **Author**: Wei Zhou, VMware by Broadcom — wei-wz.zhou@broadcom.com
+> This is a community-driven project by a VMware engineer, not an official VMware product.
+> For official VMware developer tools see [developer.broadcom.com](https://developer.broadcom.com).
+
 Unified audit logging, policy enforcement, and sanitization for the VMware MCP skill family.
 
 ## Install

@@ -1,5 +1,9 @@
 # VMware Policy
 
+> **作者**: Wei Zhou, VMware by Broadcom — wei-wz.zhou@broadcom.com
+> 本项目由 VMware 工程师维护的社区项目，非 VMware 官方产品。
+> VMware 官方开发者工具请访问 [developer.broadcom.com](https://developer.broadcom.com)。
+
 VMware MCP 技能家族的统一审计日志、策略执行与输入消毒基础设施层。
 
 ## 安装

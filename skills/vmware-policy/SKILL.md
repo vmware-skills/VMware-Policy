@@ -12,7 +12,7 @@ installer:
 allowed-tools:
   - Bash
 user-invocable: false
-metadata: {"openclaw":{"requires":{"env":["VMWARE_POLICY_CONFIG"],"bins":["vmware-audit"],"config":["~/.vmware/rules.yaml"]},"primaryEnv":"VMWARE_POLICY_CONFIG","homepage":"https://github.com/zw008/VMware-Policy"}}
+metadata: {"openclaw":{"requires":{"bins":["vmware-audit"],"config":["~/.vmware/rules.yaml"]},"optional":{"env":["CLAUDE_SESSION_ID","OLLAMA_HOST"]},"homepage":"https://github.com/zw008/VMware-Policy","emoji":"🛡️","os":["macos","linux"]}}
 ---
 
 # VMware Policy
@@ -155,6 +155,21 @@ vmware-policy does not expose MCP tools. It is a Python library and CLI consumed
 | `AuditEngine` | Class | SQLite WAL audit logger with rotation |
 | `PolicyEngine` | Class | YAML rule evaluation with hot-reload |
 | `vmware-audit` | CLI | Typer CLI for querying audit trail |
+| `detect_agent()` | Function | Infers calling AI agent from env vars (see below) |
+
+### Agent Detection (Transparency Note)
+
+The `detect_agent()` function in `audit.py` checks the following environment variables to identify which AI agent is calling the tools. This is **read-only inspection** for audit logging purposes — no credentials are extracted or stored:
+
+| Env Var | Detected Agent | Purpose |
+|---------|---------------|---------|
+| `CLAUDE_SESSION_ID` or `CLAUDE_CODE` | claude | Claude Code session |
+| `OPENAI_API_KEY` or `CODEX_SESSION` | codex | OpenAI Codex session |
+| `OLLAMA_HOST` | local | Local Ollama model |
+| `DEERFLOW_SESSION` | deerflow | DeerFlow session |
+| (none matched) | unknown | Unrecognized agent |
+
+The detected agent name is stored in the `agent` column of `~/.vmware/audit.db` for audit trail purposes only. No API keys or tokens are logged.
 
 ## Troubleshooting
 
