@@ -1,5 +1,9 @@
 # VMware Policy — Release Notes
 
+## v1.5.6 (2026-04-15)
+
+- Align with VMware skill family v1.5.6
+
 ## v1.5.5 (2026-04-15)
 
 - Align with VMware skill family v1.5.5
