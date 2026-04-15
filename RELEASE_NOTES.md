@@ -1,5 +1,9 @@
 # VMware Policy — Release Notes
 
+## v1.5.7 (2026-04-15)
+
+- Align with VMware skill family v1.5.7 (Pilot `__from_step_N__` fix + VKS SSL/timeout fix)
+
 ## v1.5.6 (2026-04-15)
 
 - Align with VMware skill family v1.5.6
