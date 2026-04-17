@@ -1,5 +1,15 @@
 # VMware Policy — Release Notes
 
+## v1.5.12 (2026-04-17)
+
+**Security & bug fixes from code review by @yjs-2026**
+
+- **fix(security):** `_rule_matches` empty `operations: []` bypass — deny rules with empty operations list matched ALL operations instead of none, causing whitelist leak
+- **fix(security):** `sanitize()` now strips Unicode Format characters (Cf category: zero-width spaces, bidi overrides) — closes prompt injection vector
+- **fix:** `_maybe_reload` clears stale rules and logs warning when policy file is deleted, instead of silently using outdated rules
+- **fix:** `_maybe_reload` logs exceptions instead of silently swallowing them (`except Exception: pass`)
+- **fix:** `VMWARE_POLICY_DISABLED=1` bypass now logs full operation context (operation, env, risk_level, params) for audit trail
+
 ## v1.5.11 (2026-04-17)
 
 - Align with VMware skill family v1.5.11 (AVI 22.x fixes from @timwangbc)

@@ -81,13 +81,17 @@ class PolicyEngine:
     def _maybe_reload(self) -> None:
         """Hot-reload if file changed."""
         if not self._path.exists():
+            if self._rules:
+                _log.warning("Policy rules file deleted: %s — clearing rules (allow all)", self._path)
+                self._rules = {}
+                self._mtime = 0.0
             return
         try:
             current_mtime = self._path.stat().st_mtime
             if current_mtime != self._mtime:
                 self._load_rules()
         except Exception:
-            pass
+            _log.warning("Failed to check policy rules file: %s", self._path, exc_info=True)
 
     def check_allowed(
         self,
@@ -108,8 +112,12 @@ class PolicyEngine:
         Returns:
             PolicyResult with allowed=True/False and reason.
         """
-        # Bypass mode (still logs as bypassed — handled by decorator)
+        # Bypass mode — log full context for audit trail
         if os.environ.get("VMWARE_POLICY_DISABLED") == "1":
+            _log.warning(
+                "Policy DISABLED — bypassing check: operation=%s env=%s risk=%s params=%s",
+                operation, env, risk_level, params,
+            )
             return PolicyResult(allowed=True, rule="policy_disabled")
 
         self._maybe_reload()
@@ -154,9 +162,12 @@ class PolicyEngine:
     ) -> bool:
         """Check if a deny rule matches the current operation."""
         # Match by operation pattern
-        ops = rule.get("operations", [])
-        if ops and not any(self._pattern_match(op, operation) for op in ops):
-            return False
+        # Note: "operations" key absent → match all (no filter).
+        # "operations: []" → match nothing (explicit empty = no operations apply).
+        if "operations" in rule:
+            ops = rule["operations"]
+            if not ops or not any(self._pattern_match(op, operation) for op in ops):
+                return False
 
         # Match by environment
         envs = rule.get("environments", [])
