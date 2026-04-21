@@ -1,3 +1,12 @@
+## v1.5.13 (2026-04-21)
+
+**Bug fixes from code review 2026-04-20**
+
+- **fix(P0):** `audit.py` — `stats(days=N)` now correctly computes date range using `timedelta(days=days)` instead of ignoring the `days` parameter entirely
+- **fix:** `policy.py` — `_check_limits()` now logs a warning when `change_limits` are configured but not enforced, instead of silently doing nothing
+- **fix:** `policy.py` — `_in_maintenance_window()` now uses `datetime.now(tz=timezone.utc)` instead of naive `datetime.now()` for correct timezone handling
+- **fix(security):** `decorators.py` — `_redact()` now recurses into nested dicts to redact sensitive values at any depth
+
 # VMware Policy — Release Notes
 
 ## v1.5.12 (2026-04-17)

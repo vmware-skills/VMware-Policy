@@ -12,7 +12,7 @@ import logging
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -190,7 +190,7 @@ class AuditEngine:
 
     def stats(self, days: int = 7) -> dict[str, Any]:
         """Aggregate statistics over the last N days."""
-        since = datetime.now(tz=timezone.utc).isoformat()[:10]  # rough
+        since = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
         conn = self._connect()
         conn.row_factory = sqlite3.Row
 

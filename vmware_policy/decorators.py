@@ -162,4 +162,12 @@ def _redact(params: dict[str, Any], sensitive: set[str]) -> dict[str, Any]:
     """Return a copy of params with sensitive values replaced by '***'."""
     if not sensitive:
         return params
-    return {k: "***" if k in sensitive else v for k, v in params.items()}
+    result = {}
+    for k, v in params.items():
+        if k in sensitive:
+            result[k] = "***"
+        elif isinstance(v, dict):
+            result[k] = _redact(v, sensitive)
+        else:
+            result[k] = v
+    return result

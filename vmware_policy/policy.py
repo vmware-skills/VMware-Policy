@@ -193,10 +193,10 @@ class PolicyEngine:
 
     @staticmethod
     def _in_maintenance_window(window: dict[str, str]) -> bool:
-        """Check if current time is within the maintenance window."""
-        from datetime import datetime
+        """Check if current time is within the maintenance window (UTC)."""
+        from datetime import datetime, timezone
 
-        now = datetime.now()
+        now = datetime.now(tz=timezone.utc)
         try:
             start_h, start_m = map(int, window.get("start", "22:00").split(":"))
             end_h, end_m = map(int, window.get("end", "06:00").split(":"))
@@ -216,11 +216,18 @@ class PolicyEngine:
     def _check_limits(
         limits: dict[str, Any], params: dict[str, Any], operation: str
     ) -> PolicyResult | None:
-        """Check parameter-based limits (e.g. max CPU change %)."""
-        max_cpu_pct = limits.get("max_cpu_change_pct")
-        if max_cpu_pct and "cpu" in params:
-            # Placeholder — actual implementation needs before-state
-            pass
+        """Check parameter-based limits (e.g. max CPU change %).
+
+        NOTE: Not yet implemented — requires before-state to compute deltas.
+        Logs a warning when limits are configured so operators know they are
+        not being enforced.
+        """
+        if limits:
+            _log.warning(
+                "change_limits configured for '%s' but limit enforcement is not yet "
+                "implemented — limits are NOT being enforced. Params: %s",
+                operation, list(params.keys()),
+            )
         return None
 
 
