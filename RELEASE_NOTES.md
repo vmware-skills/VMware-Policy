@@ -1,3 +1,10 @@
+## v1.5.14 (2026-04-21)
+
+**Bug fixes from code review by @yjs-2026 (follow-up)**
+
+- **fix:** `audit.py` — `query()` and `stats()` SQLite connections now wrapped in try/finally to prevent leaks on exception
+- **fix:** `audit.py` — archive filename now uses `datetime.now(tz=timezone.utc)` consistent with audit record timestamps
+
 ## v1.5.13 (2026-04-21)
 
 **Bug fixes from code review 2026-04-20**

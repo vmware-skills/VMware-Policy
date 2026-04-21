@@ -127,7 +127,7 @@ class AuditEngine:
             if self._path.stat().st_size < _MAX_DB_SIZE_BYTES:
                 return
             archive_name = self._path.with_suffix(
-                f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+                f".{datetime.now(tz=timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
             )
             self._path.rename(archive_name)
             self._init_db()
@@ -183,39 +183,43 @@ class AuditEngine:
         values.append(limit)
 
         conn = self._connect()
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(sql, values).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, values).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
     def stats(self, days: int = 7) -> dict[str, Any]:
         """Aggregate statistics over the last N days."""
         since = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
         conn = self._connect()
-        conn.row_factory = sqlite3.Row
+        try:
+            conn.row_factory = sqlite3.Row
 
-        total = conn.execute(
-            "SELECT COUNT(*) as c FROM audit_log WHERE ts >= ?", (since,)
-        ).fetchone()["c"]
+            total = conn.execute(
+                "SELECT COUNT(*) as c FROM audit_log WHERE ts >= ?", (since,)
+            ).fetchone()["c"]
 
-        by_status = {
-            r["status"]: r["c"]
-            for r in conn.execute(
-                "SELECT status, COUNT(*) as c FROM audit_log WHERE ts >= ? GROUP BY status",
-                (since,),
-            ).fetchall()
-        }
+            by_status = {
+                r["status"]: r["c"]
+                for r in conn.execute(
+                    "SELECT status, COUNT(*) as c FROM audit_log WHERE ts >= ? GROUP BY status",
+                    (since,),
+                ).fetchall()
+            }
 
-        by_skill = {
-            r["skill"]: r["c"]
-            for r in conn.execute(
-                "SELECT skill, COUNT(*) as c FROM audit_log WHERE ts >= ? GROUP BY skill",
-                (since,),
-            ).fetchall()
-        }
+            by_skill = {
+                r["skill"]: r["c"]
+                for r in conn.execute(
+                    "SELECT skill, COUNT(*) as c FROM audit_log WHERE ts >= ? GROUP BY skill",
+                    (since,),
+                ).fetchall()
+            }
 
-        conn.close()
-        return {"total": total, "by_status": by_status, "by_skill": by_skill, "days": days}
+            return {"total": total, "by_status": by_status, "by_skill": by_skill, "days": days}
+        finally:
+            conn.close()
 
 
 # ── Module-level helpers ──────────────────────────────────────────────
