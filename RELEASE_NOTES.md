@@ -1,3 +1,11 @@
+## v1.5.16 (2026-04-30)
+
+**Enterprise Harness Engineering alignment** — adapted from the Linkloud × addxai framework articles ([part 1](https://mp.weixin.qq.com/s/hz4W7ILHJ1yz_pG0Z1xP-A), [part 2](https://mp.weixin.qq.com/s/F3qYbyB3S8oIqx-Y4BrWNQ)).
+
+- **feat (PoC):** New `docs/auto-remediation-patterns.md` design doc — schema, lifecycle, and three hard conditions (risk:low + reversible + repeatable) for the L5 automation level from the EHE framework.
+- **feat (PoC):** New `scripts/extract_patterns.py` — scans `~/.vmware/audit.db` for candidate L5 patterns, applies thresholds (≥5 successes, 0 failures, ≥2 distinct operators, low-risk only, denylist), prints YAML stubs for human authoring.
+- **align:** Family version bump 1.5.14 → 1.5.16 (skipping 1.5.15 to align with the rest of the family).
+
 ## v1.5.14 (2026-04-21)
 
 **Bug fixes from code review by @yjs-2026 (follow-up)**
