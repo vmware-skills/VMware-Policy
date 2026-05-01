@@ -120,6 +120,76 @@ class TestVmwareTool:
 
 
 @pytest.mark.unit
+class TestPatternIntegration:
+    def test_armed_pattern_annotates_result(self, _fresh_singletons, tmp_path):
+        """When a pattern matches and is armed, the result dict carries _pattern_id."""
+        # Set up a signed pattern in a temp dir
+        patterns_dir = tmp_path / "patterns"
+        patterns_dir.mkdir()
+        # Note: _infer_skill returns "unknown" for functions defined in test
+        # modules (no vmware_ prefix in __module__). The pattern's action.skill
+        # must therefore match "unknown" for the matcher to fire.
+        (patterns_dir / "iscsi.yaml").write_text(
+            "schema_version: 1\n"
+            "pattern_id: iscsi-rescan-test\n"
+            "classification:\n"
+            "  risk: low\n"
+            "  reversible: true\n"
+            "  repeatable: true\n"
+            "action:\n"
+            "  skill: unknown\n"
+            "  tool: storage_rescan\n"
+            "rate_limit:\n"
+            "  max_per_hour_per_host: 10\n"
+            "circuit_breaker:\n"
+            "  consecutive_validation_failures: 3\n"
+            "approval:\n"
+            "  status: approved\n"
+            "  signed_by: test@example.com\n"
+        )
+        # Reset and reseat the pattern engine singleton on the temp dir
+        import vmware_policy.patterns as pmod
+        pmod._engine = pmod.PatternEngine(patterns_dir)
+
+        @vmware_tool(risk_level="low")
+        def storage_rescan(target: str = "") -> dict:
+            return {"ok": True}
+
+        result = storage_rescan(target="esxi-01")
+        assert result["_pattern_id"] == "iscsi-rescan-test"
+        assert result["_pattern_armed"] is True
+
+        # Audit row also annotated
+        engine = _fresh_singletons
+        rows = engine.query(limit=1)
+        assert rows[0]["status"] == "ok"
+        # Result column is JSON-serialized
+        import json
+        result_json = json.loads(rows[0]["result"])
+        assert result_json.get("_pattern_id") == "iscsi-rescan-test"
+
+        pmod._engine = None
+
+    def test_no_pattern_match_no_annotation(self, _fresh_singletons, tmp_path):
+        """When no pattern matches, no _pattern_id is added to the result."""
+        # Empty patterns dir
+        patterns_dir = tmp_path / "patterns"
+        patterns_dir.mkdir()
+        import vmware_policy.patterns as pmod
+        pmod._engine = pmod.PatternEngine(patterns_dir)
+
+        @vmware_tool(risk_level="low")
+        def list_vms(target: str = "") -> dict:
+            return {"vms": []}
+
+        result = list_vms(target="vc1")
+        assert "_pattern_id" not in result
+        assert "_pattern_armed" not in result
+
+        pmod._engine = None
+
+
+@pytest.mark.unit
 class TestPolicyDenied:
     def test_denied_logged_with_status(self, _fresh_singletons, tmp_path):
         engine = _fresh_singletons

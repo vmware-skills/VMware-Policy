@@ -29,6 +29,7 @@ from functools import wraps
 from typing import Any
 
 from vmware_policy.audit import AuditEngine, detect_agent, get_engine
+from vmware_policy.patterns import PatternMatch, get_pattern_engine
 from vmware_policy.policy import PolicyEngine, PolicyResult, get_policy_engine
 from vmware_policy.sanitize import sanitize
 
@@ -77,6 +78,7 @@ def vmware_tool(
             status = "ok"
             result: Any = None
             policy_result: PolicyResult | None = None
+            pattern_match: PatternMatch | None = None
             audit = get_engine()
             policy = get_policy_engine()
 
@@ -98,8 +100,27 @@ def vmware_tool(
                     result = {"error": policy_result.reason, "rule": policy_result.rule}
                     raise PolicyDenied(policy_result)
 
+                # ── L5 auto-remediation pattern check ─────────────
+                # Patterns are signed YAMLs in ~/.vmware/auto-remediation-patterns/.
+                # Matching attaches pattern_id to the audit row and may signal
+                # the caller that double-confirm can be skipped. Rate-limit and
+                # circuit-breaker enforcement happens inside the engine. Failure
+                # to consult the engine never blocks the call (fail-open).
+                try:
+                    pattern_match = get_pattern_engine().match(
+                        skill=skill, tool=tool_name,
+                        target=str(env) if env else "",
+                    )
+                except Exception:  # noqa: BLE001 — fail-open by design
+                    pattern_match = None
+
                 # ── Execute ───────────────────────────────────────
                 result = func(*args, **kwargs)
+                # If the result is a dict and a pattern is armed, surface
+                # the pattern_id so callers can elide UI-level confirmation.
+                if pattern_match and pattern_match.armed and isinstance(result, dict):
+                    result.setdefault("_pattern_id", pattern_match.pattern.pattern_id)
+                    result.setdefault("_pattern_armed", True)
                 return result
 
             except PolicyDenied:
@@ -115,11 +136,26 @@ def vmware_tool(
                 bypassed = policy_result and policy_result.rule == "policy_disabled"
                 final_status = f"{status}_bypassed" if bypassed else status
 
+                # Update circuit-breaker state for armed patterns
+                if pattern_match and pattern_match.armed:
+                    try:
+                        get_pattern_engine().report_outcome(
+                            pattern_id=pattern_match.pattern.pattern_id,
+                            target=str(env) if env else "",
+                            success=(status == "ok"),
+                        )
+                    except Exception:  # noqa: BLE001 — never let bookkeeping fail the call
+                        pass
+
+                # Annotate audit row with pattern context when present
+                pattern_id = pattern_match.pattern.pattern_id if pattern_match else ""
+                pattern_armed = bool(pattern_match and pattern_match.armed)
+
                 audit.log(
                     skill=skill,
                     tool=tool_name,
                     params=safe_params,
-                    result=result,
+                    result=_with_pattern_context(result, pattern_id, pattern_armed),
                     status=final_status,
                     duration_ms=duration,
                     agent=agent,
@@ -170,4 +206,20 @@ def _redact(params: dict[str, Any], sensitive: set[str]) -> dict[str, Any]:
             result[k] = _redact(v, sensitive)
         else:
             result[k] = v
+    return result
+
+
+def _with_pattern_context(result: Any, pattern_id: str, armed: bool) -> Any:
+    """Attach pattern metadata to an audit row's result field.
+
+    Only mutates dict results; non-dict results (errors, primitives) are
+    returned unchanged so the audit log preserves them faithfully.
+    """
+    if not pattern_id:
+        return result
+    if isinstance(result, dict):
+        annotated = dict(result)
+        annotated.setdefault("_pattern_id", pattern_id)
+        annotated.setdefault("_pattern_armed", armed)
+        return annotated
     return result

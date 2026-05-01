@@ -1,6 +1,6 @@
-# Auto-Remediation Patterns — Design (PoC)
+# Auto-Remediation Patterns — Design
 
-> **Status**: PoC / design doc. Not yet wired into the runtime decorator. See PoC code at `scripts/extract_patterns.py` and reference pattern at [VMware-Storage/patterns/iscsi-target-stale-rescan.yaml](https://github.com/zw008/VMware-Storage/blob/main/patterns/iscsi-target-stale-rescan.yaml).
+> **Status**: Wired into the `@vmware_tool` decorator as of v1.5.17 (in development). Pattern matching, rate limiting, and circuit-breaker are live. Auto-execution and trigger-against-historical-audit-events are still future work — see "What we are NOT shipping yet" below. Implementation: [`vmware_policy/patterns.py`](../vmware_policy/patterns.py). Candidate scanner: [`scripts/extract_patterns.py`](../scripts/extract_patterns.py). First reference pattern: [VMware-Storage/patterns/iscsi-target-stale-rescan.yaml](https://github.com/zw008/VMware-Storage/blob/main/patterns/iscsi-target-stale-rescan.yaml).
 
 ## Goal
 
@@ -124,18 +124,25 @@ approval:
 4. **Validation**: the success criterion is observable — `storage_iscsi_status` after rescan shows healthy devices.
 5. **Tight blast radius**: the operation only affects a single ESXi host. No cluster-wide cascades.
 
-## Why we are NOT shipping L5 in production yet
+## What ships in v1.5.17
 
-This is a PoC. To ship safely, we need:
+- [x] Pattern matcher wired into `@vmware_tool` (`vmware_policy/patterns.py`)
+- [x] Signed-YAML loading from `~/.vmware/auto-remediation-patterns/`, hot-reload on mtime
+- [x] Per-pattern rate limiting (hourly + daily, per-target)
+- [x] Circuit breaker (configurable threshold + cooldown, default 3 / 24h)
+- [x] Audit row annotation: matched calls carry `_pattern_id` and `_pattern_armed` in result
+- [x] Test suite: 16 unit tests in `tests/test_patterns.py` + 2 decorator integration tests
 
-- [ ] Full pattern matcher integrated into `@vmware_tool` decorator
-- [ ] Approval channel (GitHub PR or signed YAML) wired up
-- [ ] Per-pattern rate limiting (e.g., max 1 auto-remediation per cluster per hour)
-- [ ] Circuit breaker (3 consecutive validation failures → disable pattern, page operator)
-- [ ] Telemetry on pattern hit rate, validation success, false-positive rate
-- [ ] Eval suite — regression tests so refactors don't silently break the matcher
+## What we are NOT shipping yet
 
-These are tracked as separate work items.
+These are deferred to a follow-up release:
+
+- [ ] **Trigger matching against historical audit events** — currently the matcher only checks the `action` block; the `trigger` block is loaded but not consulted. Production use requires "given a recent audit row matching `trigger`, the next call to the `action` tool is auto-armed."
+- [ ] **Auto-execution daemon** — today the matcher just *flags* a call as armed; an external worker that observes triggers and proactively runs actions is out of scope.
+- [ ] **Validation post-step** — the YAML's `validation` block is ignored. The decorator only knows whether the action call returned ok or raised. Real validation requires a follow-up tool call after a delay.
+- [ ] **Persistent state across restarts** — rate-limit and circuit-breaker counters live in process memory. A restart resets them.
+- [ ] **Approval channel** — the YAML must already be signed by a human (PR-merged + `signed_by` filled). There is no in-band approval flow.
+- [ ] **Telemetry export** — audit.db captures pattern_id, but no rollup or dashboard yet.
 
 ## Relationship to existing rules engine
 

@@ -3,6 +3,7 @@
 __version__ = "1.5.16"
 
 from vmware_policy.decorators import vmware_tool
+from vmware_policy.patterns import Pattern, PatternMatch, get_pattern_engine
 from vmware_policy.sanitize import sanitize
 
-__all__ = ["vmware_tool", "sanitize"]
+__all__ = ["vmware_tool", "sanitize", "Pattern", "PatternMatch", "get_pattern_engine"]
