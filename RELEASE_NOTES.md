@@ -1,3 +1,16 @@
+## v1.5.17 (2026-05-01)
+
+**L5 auto-remediation pattern matcher integrated into `@vmware_tool`** — the v1.5.16 PoC scaffolding (design doc + extractor) now has a runtime engine.
+
+- **feat:** New module `vmware_policy/patterns.py` — `PatternEngine` singleton. Loads signed YAML patterns from `~/.vmware/auto-remediation-patterns/*.yaml` with hot-reload on mtime. Validates schema, action signatures, and approval state.
+- **feat:** `@vmware_tool` decorator integration — matched + armed calls have `_pattern_id` and `_pattern_armed` annotated on the result dict and the audit row. Outcome reporting in the `finally` block updates circuit-breaker state.
+- **feat:** Per-`(pattern_id, target)` rate limiting — sliding hourly + daily windows. Per-target circuit breaker — configurable threshold (default 3 consecutive failures) and cooldown (default 24h).
+- **safety:** Patterns must be signed (`approval.signed_by` non-empty + `status=approved`) AND classified `risk: low + reversible: true + repeatable: true` to be armable. Unsigned and high-risk patterns load for inspection but never arm. Failure modes are fail-open: load/match errors never block tool calls.
+- **docs:** `docs/auto-remediation-patterns.md` now reflects the shipped surface and the deferred items (trigger-against-historical-audit, auto-execution daemon, post-action validation, persistent state across restarts).
+- **align:** Family version bump to v1.5.17.
+
+Tests: 34 → 52 passing (16 pattern engine + 2 decorator integration).
+
 ## v1.5.16 (2026-04-30)
 
 **Enterprise Harness Engineering alignment** — adapted from the Linkloud × addxai framework articles ([part 1](https://mp.weixin.qq.com/s/hz4W7ILHJ1yz_pG0Z1xP-A), [part 2](https://mp.weixin.qq.com/s/F3qYbyB3S8oIqx-Y4BrWNQ)).
