@@ -225,8 +225,12 @@ class PatternEngine:
             reversible=bool(cls_block.get("reversible", False)),
             repeatable=bool(cls_block.get("repeatable", False)),
             expires_at=str(raw.get("expires_at") or ""),
-            rate_max_per_hour_per_target=int(rate.get("max_per_hour_per_host", 0) or 0),
-            rate_max_per_day_per_target=int(rate.get("max_per_day_per_cluster", 0) or 0),
+            rate_max_per_hour_per_target=int(
+                rate.get("max_per_hour", rate.get("max_per_hour_per_host", 0)) or 0
+            ),
+            rate_max_per_day_per_target=int(
+                rate.get("max_per_day", rate.get("max_per_day_per_cluster", 0)) or 0
+            ),
             circuit_threshold=int(cb.get("consecutive_validation_failures", 3) or 3),
             circuit_disable_seconds=int(cb.get("disable_seconds", 86400) or 86400),
             raw=raw,

@@ -1,3 +1,13 @@
+## v1.5.18 (2026-05-02)
+
+**Bug fix from external code review (2026-05-02 by Hermes Agent / MiniMax-M2.7)**
+
+- **fix:** `patterns.py` — pattern YAML now accepts the canonical rate-limit keys `max_per_hour` / `max_per_day` alongside the legacy `max_per_hour_per_host` / `max_per_day_per_cluster`. The dataclass field is `rate_max_per_hour_per_target` (target-agnostic), and the new keys remove the host/cluster naming mismatch flagged in review. Old keys still work — zero breakage for existing pattern files.
+- **dev:** `[dependency-groups]` block aligned with the rest of the family — `pytest`, `pytest-cov`, `ruff` all available via `uv sync --group dev`.
+- **align:** Family version bump to v1.5.18.
+
+Tests: 16/16 pattern engine pass.
+
 ## v1.5.17 (2026-05-01)
 
 **L5 auto-remediation pattern matcher integrated into `@vmware_tool`** — the v1.5.16 PoC scaffolding (design doc + extractor) now has a runtime engine.
