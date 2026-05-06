@@ -214,7 +214,10 @@ class PatternEngine:
         # Force unsigned patterns to be non-armable by setting risk to a
         # non-"low" sentinel. Loading still succeeds for inspection.
         effective_risk = cls_block.get("risk", "")
-        if not signed_by and approval_status != "approved":
+        # Both gates required: signed AND approved. A signed-but-rejected pattern
+        # must NOT be armable (yjs review 2026-05-06 — previously the OR-style
+        # check let signed-rejected slip through with original risk).
+        if not signed_by or approval_status != "approved":
             effective_risk = "unsigned"
 
         return Pattern(
@@ -344,13 +347,16 @@ class PatternEngine:
 # ── Singleton ─────────────────────────────────────────────────────────
 
 _engine: PatternEngine | None = None
+_engine_lock = threading.Lock()
 
 
 def get_pattern_engine(patterns_dir: Path | str | None = None) -> PatternEngine:
     """Return the global PatternEngine singleton."""
     global _engine
     if _engine is None:
-        _engine = PatternEngine(patterns_dir)
+        with _engine_lock:
+            if _engine is None:
+                _engine = PatternEngine(patterns_dir)
     return _engine
 
 

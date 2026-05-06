@@ -1,3 +1,12 @@
+## v1.5.19 (2026-05-06)
+
+**Security + concurrency fixes** in pattern engine.
+
+- **fix(patterns):** Approval gate now requires BOTH `signed_by` AND `approval.status == "approved"`. The previous AND-style condition (`if not signed_by AND status != "approved"`) let signed-but-rejected patterns retain their original risk classification, which was the opposite of intended behavior (yjs review 2026-05-06; CLAUDE.md 踩坑 #30).
+- **fix(patterns):** `get_pattern_engine` singleton initialization now uses `threading.Lock` with double-checked locking to prevent multiple PatternEngine instances under concurrent first-access in multi-threaded callers.
+- **smoke:** Family `scripts/family_smoke.sh` now recursively walks every Typer subcommand to trigger lazy imports.
+- **align:** Family version bump to v1.5.19.
+
 ## v1.5.18 (2026-05-02)
 
 **Bug fix from external code review (2026-05-02 by Hermes Agent / MiniMax-M2.7)**
