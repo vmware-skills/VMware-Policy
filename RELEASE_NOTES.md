@@ -1,3 +1,10 @@
+## v1.5.21 (2026-05-08)
+
+**Family alignment** — no source changes in this library. Skipped v1.5.20 family bump; this is the catch-up release.
+
+- **chore:** Untracked `.venv/` from the repository (was committed by mistake; `.gitignore` already excludes it). Removed 1832 files from version control with no functional change.
+- **align:** Tracks family v1.5.20 + v1.5.21 alignment.
+
 ## v1.5.19 (2026-05-06)
 
 **Security + concurrency fixes** in pattern engine.
