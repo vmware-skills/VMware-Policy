@@ -1,3 +1,19 @@
+## v1.5.35 (2026-06-10) — security hardening: stop leaking credentials in logs & audit (affects all skills)
+
+Shared dependency — these fixes protect every skill in the family.
+
+### Fixed
+- **Bypass-mode logging** no longer prints parameter *values* (which could carry
+  passwords/tokens). When `VMWARE_POLICY_DISABLED=1`, only parameter *names* are logged.
+- **Policy check** now receives the already-redacted `safe_params`, not the raw `kwargs`.
+- **`_redact()`** recurses into lists/tuples, so secrets nested in collections
+  (e.g. `{"targets": [{"password": "..."}]}`) are masked in audit records.
+- **Exception text and tracebacks** are sanitized and secret-pattern–redacted
+  (`password=…`, `token: …`) before being written to the audit DB.
+- **Audit storage** directory is created 0700 and the DB (incl. WAL/SHM) 0600.
+
+This release aligns the whole family back to a single version (1.5.35); vmware-policy and vmware-pilot return to the shared number after sitting at 1.5.22.
+
 ## v1.5.22 (2026-05-08)
 
 **Family alignment** — no source changes in this skill.

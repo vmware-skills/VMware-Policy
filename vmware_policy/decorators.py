@@ -23,6 +23,7 @@ Registration enforcement::
 
 from __future__ import annotations
 
+import re
 import time
 import traceback
 from functools import wraps
@@ -92,7 +93,7 @@ def vmware_tool(
                     tool_name,
                     env=str(env) if env else "",
                     risk_level=risk_level,
-                    params=kwargs,
+                    params=safe_params,
                 )
 
                 if not policy_result.allowed:
@@ -128,7 +129,14 @@ def vmware_tool(
 
             except Exception as exc:
                 status = "error"
-                result = {"error": str(exc), "traceback": traceback.format_exc()[-500:]}
+                # Sanitize before persisting — exception text and tracebacks can
+                # carry connection strings, credentials, internal paths, host:port.
+                result = {
+                    "error": sanitize(_redact_secrets_text(str(exc)), 500),
+                    "traceback": sanitize(
+                        _redact_secrets_text(traceback.format_exc()[-500:]), 500
+                    ),
+                }
                 raise
 
             finally:
@@ -195,18 +203,44 @@ def _infer_skill(func: Any) -> str:
 
 
 def _redact(params: dict[str, Any], sensitive: set[str]) -> dict[str, Any]:
-    """Return a copy of params with sensitive values replaced by '***'."""
+    """Return a copy of params with sensitive values replaced by '***'.
+
+    Recurses into nested dicts AND lists/tuples so credentials buried inside
+    collections (e.g. ``{"targets": [{"password": "x"}]}``) are redacted too.
+    """
     if not sensitive:
         return params
-    result = {}
+    result: dict[str, Any] = {}
     for k, v in params.items():
         if k in sensitive:
             result[k] = "***"
-        elif isinstance(v, dict):
-            result[k] = _redact(v, sensitive)
         else:
-            result[k] = v
+            result[k] = _redact_value(v, sensitive)
     return result
+
+
+def _redact_value(value: Any, sensitive: set[str]) -> Any:
+    """Recursively redact sensitive keys inside dicts, lists, and tuples."""
+    if isinstance(value, dict):
+        return _redact(value, sensitive)
+    if isinstance(value, (list, tuple)):
+        return type(value)(_redact_value(item, sensitive) for item in value)
+    return value
+
+
+# Matches ``key=value`` / ``key: value`` / ``key"="value`` for common secret
+# keys in free-form exception text. Value runs until whitespace, quote, comma,
+# or '@' (to keep host:port that often follows a credential in DSNs).
+_SECRET_TEXT_RE = re.compile(
+    r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|bearer)"
+    r"(\s*[=:]\s*|\s+)"
+    r"['\"]?[^\s'\",@]+",
+)
+
+
+def _redact_secrets_text(text: str) -> str:
+    """Redact ``password=...`` / ``token: ...`` style secrets in free-form text."""
+    return _SECRET_TEXT_RE.sub(r"\1\2***", text)
 
 
 def _with_pattern_context(result: Any, pattern_id: str, armed: bool) -> Any:

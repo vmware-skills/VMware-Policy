@@ -112,11 +112,14 @@ class PolicyEngine:
         Returns:
             PolicyResult with allowed=True/False and reason.
         """
-        # Bypass mode — log full context for audit trail
+        # Bypass mode — log context for audit trail. Log only parameter NAMES,
+        # never values: param values may carry passwords/tokens, and this path
+        # can be reached by callers that did not pre-redact.
         if os.environ.get("VMWARE_POLICY_DISABLED") == "1":
+            param_names = sorted(params.keys()) if isinstance(params, dict) else []
             _log.warning(
-                "Policy DISABLED — bypassing check: operation=%s env=%s risk=%s params=%s",
-                operation, env, risk_level, params,
+                "Policy DISABLED — bypassing check: operation=%s env=%s risk=%s param_keys=%s",
+                operation, env, risk_level, param_names,
             )
             return PolicyResult(allowed=True, rule="policy_disabled")
 

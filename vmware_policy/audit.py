@@ -56,8 +56,9 @@ class AuditEngine:
         self._path = Path(db_path).expanduser() if db_path else _DEFAULT_DB
         self._ok = False
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._init_db()
+            self._harden_permissions()
             self._ok = True
         except Exception:
             _log.warning("Cannot initialize audit DB at %s", self._path, exc_info=True)
@@ -68,6 +69,23 @@ class AuditEngine:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.commit()
         conn.close()
+
+    def _harden_permissions(self) -> None:
+        """Restrict the audit dir to 0700 and DB files (incl. WAL/SHM) to 0600.
+
+        ``mkdir(mode=...)`` is masked by umask, so set permissions explicitly.
+        Best-effort: never raises (audit must not break the tool call)."""
+        try:
+            os.chmod(self._path.parent, 0o700)
+        except OSError:
+            pass
+        for suffix in ("", "-wal", "-shm"):
+            candidate = self._path.with_name(self._path.name + suffix)
+            try:
+                if candidate.exists():
+                    os.chmod(candidate, 0o600)
+            except OSError:
+                pass
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path), timeout=_BUSY_TIMEOUT_MS / 1000)
@@ -131,6 +149,7 @@ class AuditEngine:
             )
             self._path.rename(archive_name)
             self._init_db()
+            self._harden_permissions()
             self._cleanup_archives()
             _log.info("Audit DB rotated → %s", archive_name.name)
         except Exception:
@@ -178,8 +197,10 @@ class AuditEngine:
             clauses.append("ts >= ?")
             values.append(since)
 
+        # ``clauses`` are hardcoded "col = ?" fragments; every user value is a
+        # bound parameter in ``values``. No user input is interpolated here.
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"SELECT * FROM audit_log {where} ORDER BY id DESC LIMIT ?"
+        sql = f"SELECT * FROM audit_log {where} ORDER BY id DESC LIMIT ?"  # nosec B608
         values.append(limit)
 
         conn = self._connect()
