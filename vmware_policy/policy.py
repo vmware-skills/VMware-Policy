@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -139,7 +140,29 @@ class PolicyEngine:
         # ── Evaluate maintenance window ───────────────────────────────
         window = self._rules.get("maintenance_window")
         if window and risk_level in ("high", "critical"):
-            if not self._in_maintenance_window(window):
+            try:
+                in_window = self._in_maintenance_window(window)
+            except (ValueError, TypeError, AttributeError):
+                # Fail CLOSED: a malformed window must not silently allow
+                # high-risk operations around the clock.
+                _log.error(
+                    "Malformed maintenance_window %r in %s — failing CLOSED: "
+                    "high-risk operations are blocked until the rule is fixed. "
+                    "Expected 'start' and 'end' as 'HH:MM' strings, e.g. "
+                    "start: \"22:00\" / end: \"06:00\".",
+                    window, self._path,
+                )
+                return PolicyResult(
+                    allowed=False,
+                    rule="maintenance_window_malformed",
+                    reason=(
+                        f"maintenance_window in {self._path} is malformed "
+                        f"({window!r}). High-risk operations are blocked until it is "
+                        "fixed. Expected 'start' and 'end' as 'HH:MM' strings, "
+                        'e.g. start: "22:00" / end: "06:00".'
+                    ),
+                )
+            if not in_window:
                 return PolicyResult(
                     allowed=False,
                     rule="maintenance_window",
@@ -196,15 +219,16 @@ class PolicyEngine:
 
     @staticmethod
     def _in_maintenance_window(window: dict[str, str]) -> bool:
-        """Check if current time is within the maintenance window (UTC)."""
+        """Check if current time is within the maintenance window (UTC).
+
+        Raises ValueError/TypeError/AttributeError when the window is
+        malformed — the caller fails CLOSED with a teaching message.
+        """
         from datetime import datetime, timezone
 
         now = datetime.now(tz=timezone.utc)
-        try:
-            start_h, start_m = map(int, window.get("start", "22:00").split(":"))
-            end_h, end_m = map(int, window.get("end", "06:00").split(":"))
-        except (ValueError, AttributeError):
-            return True  # malformed → allow
+        start_h, start_m = map(int, str(window.get("start", "22:00")).split(":"))
+        end_h, end_m = map(int, str(window.get("end", "06:00")).split(":"))
 
         current_minutes = now.hour * 60 + now.minute
         start_minutes = start_h * 60 + start_m
@@ -237,11 +261,34 @@ class PolicyEngine:
 # ── Singleton ─────────────────────────────────────────────────────────
 
 _engine: PolicyEngine | None = None
+_engine_lock = threading.Lock()
 
 
 def get_policy_engine(rules_path: Path | str | None = None) -> PolicyEngine:
-    """Return the global PolicyEngine singleton."""
+    """Return the global PolicyEngine singleton (lazy, lock-guarded).
+
+    A ``rules_path`` differing from the one the singleton was created with is
+    ignored with a warning — call :func:`reset_policy_engine` first to rebind.
+    """
     global _engine
     if _engine is None:
-        _engine = PolicyEngine(rules_path)
+        with _engine_lock:
+            if _engine is None:
+                _engine = PolicyEngine(rules_path)
+                return _engine
+    if rules_path is not None:
+        requested = Path(rules_path).expanduser()
+        if requested != _engine._path:
+            _log.warning(
+                "get_policy_engine(%s) ignored — singleton already initialized "
+                "with %s; call reset_policy_engine() first to rebind.",
+                requested, _engine._path,
+            )
     return _engine
+
+
+def reset_policy_engine() -> None:
+    """Reset the singleton. Mirrors patterns.reset_pattern_engine()."""
+    global _engine
+    with _engine_lock:
+        _engine = None

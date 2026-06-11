@@ -254,15 +254,24 @@ class PatternEngine:
         """
         self._maybe_reload()
 
-        for pat in self._patterns.values():
-            if pat.skill != skill or pat.tool != tool:
-                continue
+        # Collect every pattern whose action matches, then prefer the first
+        # ARMABLE one. Previously the first (skill, tool) match won even when
+        # not armable, shadowing a later armable pattern.
+        candidates = [
+            p for p in self._patterns.values()
+            if p.skill == skill and p.tool == tool
+        ]
+        if not candidates:
+            return None
 
-            if not pat.is_armable:
-                return PatternMatch(pattern=pat, armed=False,
-                                    reason=f"pattern {pat.pattern_id} is not armable "
-                                           f"(risk={pat.risk}, expired={pat.is_expired})")
+        armable = [p for p in candidates if p.is_armable]
+        if not armable:
+            pat = candidates[0]
+            return PatternMatch(pattern=pat, armed=False,
+                                reason=f"pattern {pat.pattern_id} is not armable "
+                                       f"(risk={pat.risk}, expired={pat.is_expired})")
 
+        for pat in armable:
             with self._lock:
                 key = (pat.pattern_id, target or "")
                 ctr = self._counters.setdefault(key, _Counters())

@@ -23,7 +23,16 @@ class TestSanitize:
 
     def test_handles_non_string_input(self):
         assert sanitize(12345) == "12345"
-        assert sanitize(None) == "None"
+
+    def test_none_sanitizes_to_empty_string(self):
+        # Fix: None must not become the literal string "None"
+        assert sanitize(None) == ""
+
+    def test_strips_before_truncating(self):
+        # Fix: control-char padding must not push the real payload
+        # past the truncation cut-off
+        padded = "\x00" * 600 + "payload"
+        assert sanitize(padded) == "payload"
 
     def test_empty_string(self):
         assert sanitize("") == ""

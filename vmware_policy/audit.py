@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -147,7 +148,25 @@ class AuditEngine:
             archive_name = self._path.with_suffix(
                 f".{datetime.now(tz=timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
             )
+            # Checkpoint the WAL into the main file before renaming, otherwise
+            # un-checkpointed rows in audit.db-wal are silently lost (the
+            # sidecars belong to the OLD path and never follow the archive).
+            try:
+                conn = self._connect()
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    conn.close()
+            except Exception:
+                _log.warning("WAL checkpoint before rotation failed", exc_info=True)
             self._path.rename(archive_name)
+            # Drop now-stale sidecars (empty after a successful checkpoint).
+            for suffix in ("-wal", "-shm"):
+                sidecar = self._path.with_name(self._path.name + suffix)
+                try:
+                    sidecar.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self._init_db()
             self._harden_permissions()
             self._cleanup_archives()
@@ -266,7 +285,9 @@ def detect_agent() -> str:
     """Infer the calling AI agent from environment variables."""
     if os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CLAUDE_CODE"):
         return "claude"
-    if os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_SESSION"):
+    # Note: OPENAI_API_KEY is deliberately NOT used as a codex marker — it is
+    # commonly set in shells for unrelated tooling and misattributes the agent.
+    if os.environ.get("CODEX_SESSION"):
         return "codex"
     if os.environ.get("OLLAMA_HOST"):
         return "local"
@@ -277,11 +298,34 @@ def detect_agent() -> str:
 
 # Singleton — shared across all skills in the same process
 _engine: AuditEngine | None = None
+_engine_lock = threading.Lock()
 
 
 def get_engine(db_path: Path | str | None = None) -> AuditEngine:
-    """Return the global AuditEngine singleton (lazy-initialized)."""
+    """Return the global AuditEngine singleton (lazy, lock-guarded).
+
+    A ``db_path`` differing from the one the singleton was created with is
+    ignored with a warning — call :func:`reset_engine` first to rebind.
+    """
     global _engine
     if _engine is None:
-        _engine = AuditEngine(db_path)
+        with _engine_lock:
+            if _engine is None:
+                _engine = AuditEngine(db_path)
+                return _engine
+    if db_path is not None:
+        requested = Path(db_path).expanduser()
+        if requested != _engine._path:
+            _log.warning(
+                "get_engine(%s) ignored — singleton already initialized at %s; "
+                "call reset_engine() first to rebind.",
+                requested, _engine._path,
+            )
     return _engine
+
+
+def reset_engine() -> None:
+    """Reset the singleton. Mirrors patterns.reset_pattern_engine()."""
+    global _engine
+    with _engine_lock:
+        _engine = None

@@ -23,16 +23,20 @@ Registration enforcement::
 
 from __future__ import annotations
 
+import inspect
+import logging
 import re
 import time
 import traceback
 from functools import wraps
 from typing import Any
 
-from vmware_policy.audit import AuditEngine, detect_agent, get_engine
+from vmware_policy.audit import detect_agent, get_engine
 from vmware_policy.patterns import PatternMatch, get_pattern_engine
-from vmware_policy.policy import PolicyEngine, PolicyResult, get_policy_engine
+from vmware_policy.policy import PolicyResult, get_policy_engine
 from vmware_policy.sanitize import sanitize
+
+_log = logging.getLogger("vmware-policy.decorators")
 
 
 class PolicyDenied(Exception):
@@ -64,112 +68,52 @@ def vmware_tool(
     Args:
         risk_level: One of 'low', 'medium', 'high', 'critical'.
         idempotent: Whether the operation can be safely retried on failure.
-        timeout_seconds: Maximum execution time before warning.
+        timeout_seconds: Maximum execution time before warning — exceeding it
+            logs a warning (no hard cancellation).
         sensitive_params: Parameter names to redact in audit logs.
     """
     _sensitive = set(sensitive_params or [])
 
     def decorator(func: Any) -> Any:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            skill = _infer_skill(func)
-            tool_name = func.__name__
-            agent = detect_agent()
-            start = time.time()
-            status = "ok"
-            result: Any = None
-            policy_result: PolicyResult | None = None
-            pattern_match: PatternMatch | None = None
-            audit = get_engine()
-            policy = get_policy_engine()
+        # Cache the signature at decoration time so positional args can be
+        # mapped to parameter names on every call (audit + env scoping).
+        signature = inspect.signature(func)
 
-            # ── Redact sensitive params for logging ───────────────
-            safe_params = _redact(kwargs, _sensitive)
-
-            try:
-                # ── Policy pre-check ──────────────────────────────
-                env = kwargs.get("target", kwargs.get("env", ""))
-                policy_result = policy.check_allowed(
-                    tool_name,
-                    env=str(env) if env else "",
-                    risk_level=risk_level,
-                    params=safe_params,
+        if inspect.iscoroutinefunction(func):
+            # ── Async tools get an async wrapper with identical audit /
+            # policy / circuit-breaker semantics (a sync wrapper would return
+            # an un-awaited coroutine and audit it as "ok").
+            @wraps(func)
+            async def wrapper(*args: Any, **kwargs: Any) -> Any:
+                state = _CallState(
+                    func, args, kwargs, signature, _sensitive, risk_level, timeout_seconds
                 )
-
-                if not policy_result.allowed:
-                    status = "denied"
-                    result = {"error": policy_result.reason, "rule": policy_result.rule}
-                    raise PolicyDenied(policy_result)
-
-                # ── L5 auto-remediation pattern check ─────────────
-                # Patterns are signed YAMLs in ~/.vmware/auto-remediation-patterns/.
-                # Matching attaches pattern_id to the audit row and may signal
-                # the caller that double-confirm can be skipped. Rate-limit and
-                # circuit-breaker enforcement happens inside the engine. Failure
-                # to consult the engine never blocks the call (fail-open).
                 try:
-                    pattern_match = get_pattern_engine().match(
-                        skill=skill, tool=tool_name,
-                        target=str(env) if env else "",
-                    )
-                except Exception:  # noqa: BLE001 — fail-open by design
-                    pattern_match = None
-
-                # ── Execute ───────────────────────────────────────
-                result = func(*args, **kwargs)
-                # If the result is a dict and a pattern is armed, surface
-                # the pattern_id so callers can elide UI-level confirmation.
-                if pattern_match and pattern_match.armed and isinstance(result, dict):
-                    result.setdefault("_pattern_id", pattern_match.pattern.pattern_id)
-                    result.setdefault("_pattern_armed", True)
-                return result
-
-            except PolicyDenied:
-                raise
-
-            except Exception as exc:
-                status = "error"
-                # Sanitize before persisting — exception text and tracebacks can
-                # carry connection strings, credentials, internal paths, host:port.
-                result = {
-                    "error": sanitize(_redact_secrets_text(str(exc)), 500),
-                    "traceback": sanitize(
-                        _redact_secrets_text(traceback.format_exc()[-500:]), 500
-                    ),
-                }
-                raise
-
-            finally:
-                duration = int((time.time() - start) * 1000)
-                bypassed = policy_result and policy_result.rule == "policy_disabled"
-                final_status = f"{status}_bypassed" if bypassed else status
-
-                # Update circuit-breaker state for armed patterns
-                if pattern_match and pattern_match.armed:
-                    try:
-                        get_pattern_engine().report_outcome(
-                            pattern_id=pattern_match.pattern.pattern_id,
-                            target=str(env) if env else "",
-                            success=(status == "ok"),
-                        )
-                    except Exception:  # noqa: BLE001 — never let bookkeeping fail the call
-                        pass
-
-                # Annotate audit row with pattern context when present
-                pattern_id = pattern_match.pattern.pattern_id if pattern_match else ""
-                pattern_armed = bool(pattern_match and pattern_match.armed)
-
-                audit.log(
-                    skill=skill,
-                    tool=tool_name,
-                    params=safe_params,
-                    result=_with_pattern_context(result, pattern_id, pattern_armed),
-                    status=final_status,
-                    duration_ms=duration,
-                    agent=agent,
-                    user="",
-                    risk_level=risk_level,
+                    _pre_check(state)
+                    return _annotate_result(state, await func(*args, **kwargs))
+                except PolicyDenied:
+                    raise
+                except Exception as exc:
+                    _capture_error(state, exc)
+                    raise
+                finally:
+                    _finalize(state)
+        else:
+            @wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                state = _CallState(
+                    func, args, kwargs, signature, _sensitive, risk_level, timeout_seconds
                 )
+                try:
+                    _pre_check(state)
+                    return _annotate_result(state, func(*args, **kwargs))
+                except PolicyDenied:
+                    raise
+                except Exception as exc:
+                    _capture_error(state, exc)
+                    raise
+                finally:
+                    _finalize(state)
 
         # ── Attach metadata for harness / introspection ───────────
         wrapper._is_vmware_tool = True
@@ -186,6 +130,172 @@ def vmware_tool(
 
 
 # ── Internal helpers ──────────────────────────────────────────────────
+
+
+class _CallState:
+    """Per-call context shared by the sync and async wrapper bodies.
+
+    Built once per invocation; the helper functions (`_pre_check`,
+    `_annotate_result`, `_capture_error`, `_finalize`) read and mutate it so
+    both wrappers keep identical audit / policy / circuit-breaker semantics.
+    """
+
+    __slots__ = (
+        "skill", "tool_name", "agent", "start", "status", "result",
+        "policy_result", "pattern_match", "audit", "policy",
+        "safe_params", "env", "risk_level", "timeout_seconds",
+    )
+
+    def __init__(
+        self,
+        func: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        signature: inspect.Signature,
+        sensitive: set[str],
+        risk_level: str,
+        timeout_seconds: int,
+    ) -> None:
+        self.skill = _infer_skill(func)
+        self.tool_name = func.__name__
+        self.agent = detect_agent()
+        self.start = time.time()
+        self.status = "ok"
+        self.result: Any = None
+        self.policy_result: PolicyResult | None = None
+        self.pattern_match: PatternMatch | None = None
+        self.risk_level = risk_level
+        self.timeout_seconds = timeout_seconds
+        self.audit = get_engine()
+        self.policy = get_policy_engine()
+
+        # Map positional args to parameter names so they appear in the audit
+        # log and participate in env scoping (previously only kwargs did).
+        params = _bind_params(signature, args, kwargs)
+        self.safe_params = _redact(params, sensitive)
+        env = params.get("target", params.get("env", ""))
+        self.env = str(env) if env else ""
+
+
+def _bind_params(
+    signature: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a full name→value param dict from positional + keyword args.
+
+    Falls back to kwargs-only if binding fails (the actual call will raise
+    the matching TypeError; audit should not mask it with its own).
+    """
+    try:
+        bound = signature.bind_partial(*args, **kwargs)
+    except TypeError:
+        return dict(kwargs)
+    params: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        kind = signature.parameters[name].kind
+        if kind == inspect.Parameter.VAR_KEYWORD:
+            params.update(value)
+        elif kind == inspect.Parameter.VAR_POSITIONAL:
+            params[name] = list(value)
+        else:
+            params[name] = value
+    return params
+
+
+def _pre_check(state: _CallState) -> None:
+    """Policy pre-check + L5 auto-remediation pattern consult.
+
+    Raises PolicyDenied when policy denies the call. Pattern engine failures
+    never block the call (fail-open by design — a broken pattern file must
+    not take down every MCP tool).
+    """
+    state.policy_result = state.policy.check_allowed(
+        state.tool_name,
+        env=state.env,
+        risk_level=state.risk_level,
+        params=state.safe_params,
+    )
+    if not state.policy_result.allowed:
+        state.status = "denied"
+        state.result = {
+            "error": state.policy_result.reason,
+            "rule": state.policy_result.rule,
+        }
+        raise PolicyDenied(state.policy_result)
+
+    try:
+        state.pattern_match = get_pattern_engine().match(
+            skill=state.skill, tool=state.tool_name, target=state.env
+        )
+    except Exception:  # noqa: BLE001 — fail-open by design
+        state.pattern_match = None
+
+
+def _annotate_result(state: _CallState, result: Any) -> Any:
+    """Record the result and surface pattern context to the caller."""
+    state.result = result
+    if (
+        state.pattern_match
+        and state.pattern_match.armed
+        and isinstance(result, dict)
+    ):
+        result.setdefault("_pattern_id", state.pattern_match.pattern.pattern_id)
+        result.setdefault("_pattern_armed", True)
+    return result
+
+
+def _capture_error(state: _CallState, exc: Exception) -> None:
+    """Record a failed call. Exception text and tracebacks can carry
+    connection strings, credentials, internal paths — sanitize before
+    persisting to the audit row."""
+    state.status = "error"
+    state.result = {
+        "error": sanitize(_redact_secrets_text(str(exc)), 500),
+        "traceback": sanitize(
+            _redact_secrets_text(traceback.format_exc()[-500:]), 500
+        ),
+    }
+
+
+def _finalize(state: _CallState) -> None:
+    """Audit + circuit-breaker bookkeeping. Runs in the wrapper's finally."""
+    duration = int((time.time() - state.start) * 1000)
+
+    # timeout_seconds is advisory: exceeding it logs a warning, no hard
+    # cancellation (cancelling mid-flight vSphere/NSX calls is worse).
+    if state.timeout_seconds and duration > state.timeout_seconds * 1000:
+        _log.warning(
+            "%s.%s took %dms — exceeded timeout_seconds=%d (advisory, not cancelled)",
+            state.skill, state.tool_name, duration, state.timeout_seconds,
+        )
+
+    bypassed = state.policy_result and state.policy_result.rule == "policy_disabled"
+    final_status = f"{state.status}_bypassed" if bypassed else state.status
+
+    # Update circuit-breaker state for armed patterns
+    if state.pattern_match and state.pattern_match.armed:
+        try:
+            get_pattern_engine().report_outcome(
+                pattern_id=state.pattern_match.pattern.pattern_id,
+                target=state.env,
+                success=(state.status == "ok"),
+            )
+        except Exception:  # noqa: BLE001 — never let bookkeeping fail the call
+            pass
+
+    pattern_id = state.pattern_match.pattern.pattern_id if state.pattern_match else ""
+    pattern_armed = bool(state.pattern_match and state.pattern_match.armed)
+
+    state.audit.log(
+        skill=state.skill,
+        tool=state.tool_name,
+        params=state.safe_params,
+        result=_with_pattern_context(state.result, pattern_id, pattern_armed),
+        status=final_status,
+        duration_ms=duration,
+        agent=state.agent,
+        user="",
+        risk_level=state.risk_level,
+    )
 
 
 def _infer_skill(func: Any) -> str:

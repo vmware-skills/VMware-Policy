@@ -1,3 +1,20 @@
+## v1.5.36 (2026-06-12) — shared-decorator correctness (affects the whole family)
+
+### Fixed
+- **`@vmware_tool` now supports async tools** — an `async def` tool was previously audited as "ok"
+  with an un-awaited coroutine as its result.
+- **Positional arguments are now audited and policy-scoped** — only `kwargs` were captured before, so
+  a positionally-passed `target` vanished from the audit log and bypassed environment deny-rules.
+- **Malformed maintenance window now fails closed** (deny + teaching error) instead of allowing
+  high-risk operations 24/7.
+- **Audit-log rotation checkpoints the WAL before renaming** — un-checkpointed frames could be lost.
+- **Pattern matcher prefers an armable match** instead of letting an expired/unsigned pattern shadow it.
+- `timeout_seconds` now logs a warning when exceeded (documented as advisory); `sanitize()` strips
+  control characters before truncating and returns "" for None.
+
+### Added
+- `reset_engine()` / `reset_policy_engine()`, lock-guarded singletons, and a path-mismatch warning.
+
 ## v1.5.35 (2026-06-10) — security hardening: stop leaking credentials in logs & audit (affects all skills)
 
 Shared dependency — these fixes protect every skill in the family.
