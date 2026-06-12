@@ -70,7 +70,8 @@ maintenance_window:
   start: "22:00"
   end: "06:00"
 
-# 变更限制 -- 参数阈值检查
+# 变更限制 -- 预留字段，当前不强制执行（引擎无前置状态计算增量，
+# 配置后仅记录一条 "未强制执行" 的警告）
 change_limits:
   max_cpu_change_pct: 20
   max_memory_change_pct: 50

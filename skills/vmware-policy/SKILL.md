@@ -30,7 +30,7 @@ Unified audit logging, policy enforcement, and input sanitization -- the infrast
 | Category | Components | Count |
 |----------|-----------|:-----:|
 | **Audit Logging** | AuditEngine (SQLite WAL), log rotation, agent detection | 3 |
-| **Policy Engine** | deny rules, maintenance windows, change limits, hot-reload | 4 |
+| **Policy Engine** | deny rules, maintenance windows, hot-reload | 3 |
 | **Sanitization** | `sanitize()` -- prompt injection defense, control char stripping | 1 |
 | **Decorator** | `@vmware_tool` -- pre-check + execute + post-log + metadata | 1 |
 | **CLI** | `vmware-audit log`, `vmware-audit export`, `vmware-audit stats` | 3 |
@@ -50,7 +50,7 @@ vmware-audit stats          # verify installation
 - View denied operations and policy violations
 - Check audit statistics (by skill, by status, by time range)
 - Export audit logs as JSON for external analysis
-- Configure deny rules, maintenance windows, or change limits
+- Configure deny rules or maintenance windows
 - Integrate the `@vmware_tool` decorator into a new VMware skill
 
 **This skill is auto-loaded as a dependency** -- you do not need to invoke it directly. It activates when:

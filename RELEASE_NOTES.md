@@ -1,3 +1,9 @@
+## v1.5.37 (2026-06-12) — backlog: stop advertising an unimplemented feature
+
+### Changed
+- "limits" removed from the `@vmware_tool` feature list / docs — `change_limits` was a documented no-op;
+  it's now clearly marked reserved/not-enforced (still logs a warning) rather than implying enforcement. (#2)
+
 ## v1.5.36 (2026-06-12) — shared-decorator correctness (affects the whole family)
 
 ### Fixed

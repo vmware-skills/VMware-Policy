@@ -169,7 +169,10 @@ class PolicyEngine:
                     reason=f"High-risk operations only allowed during {window.get('start', '?')}-{window.get('end', '?')}",
                 )
 
-        # ── Evaluate change limits ────────────────────────────────────
+        # ── Evaluate change limits (reserved, not implemented) ────────
+        # change_limits is NOT an enforced feature: _check_limits only warns
+        # that configured limits are ignored (it can't compute deltas without
+        # before-state). Kept so misconfiguration is surfaced, not silent.
         limits = self._rules.get("change_limits", {})
         if params and limits:
             result = self._check_limits(limits, params, operation)

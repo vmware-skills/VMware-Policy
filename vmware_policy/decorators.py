@@ -1,7 +1,7 @@
 """The ``@vmware_tool`` decorator — mandatory wrapper for all VMware MCP tool functions.
 
 Responsibilities:
-  1. Pre-check: evaluate policy rules (deny, maintenance window, limits)
+  1. Pre-check: evaluate policy rules (deny, maintenance window)
   2. Execute: run the actual tool function
   3. Post-log: write audit record to ``~/.vmware/audit.db``
   4. Metadata: attach risk_level, idempotent, timeout, sensitive_params

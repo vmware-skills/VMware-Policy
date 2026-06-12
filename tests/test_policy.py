@@ -117,3 +117,28 @@ class TestPolicyEngine:
         result = engine.check_allowed("delete_vm")
         assert result.allowed is True
         assert result.rule == "policy_disabled"
+
+    def test_change_limits_is_reserved_not_enforced(self, tmp_path, caplog):
+        """Issue #2: change_limits is a documented-but-unimplemented no-op.
+
+        Configuring it must NOT block an over-limit operation (nothing treats
+        'limits' as a working feature) — it only emits a 'NOT enforced' warning.
+        """
+        import logging
+
+        rules = tmp_path / "rules.yaml"
+        rules.write_text(
+            "change_limits:\n"
+            "  max_cpu_change_pct: 20\n"
+        )
+        engine = PolicyEngine(rules)
+
+        with caplog.at_level(logging.WARNING, logger="vmware-policy.policy"):
+            result = engine.check_allowed(
+                "reconfigure_vm", params={"cpu_change_pct": 80}
+            )
+
+        # Reserved feature: the operation is allowed despite "exceeding" limits.
+        assert result.allowed is True
+        assert result.rule == "default_allow"
+        assert any("not yet" in r.message.lower() for r in caplog.records)

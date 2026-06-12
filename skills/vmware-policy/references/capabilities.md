@@ -21,7 +21,7 @@ The mandatory wrapper for all VMware MCP tool functions across the entire skill 
 @vmware_tool invocation
   1. Redact sensitive parameters for logging
   2. Detect calling AI agent (Claude, Codex, local, DeerFlow)
-  3. Policy pre-check (deny rules, maintenance window, limits)
+  3. Policy pre-check (deny rules, maintenance window)
      - If denied -> log as "denied", raise PolicyDenied
   4. Execute the wrapped function
   5. Post-log audit record to ~/.vmware/audit.db
@@ -79,7 +79,7 @@ Rule-based access control with YAML hot-reload.
 |-----------|-------|--------|
 | **deny** | Block specific operations | Operation rejected with reason |
 | **maintenance_window** | Time-based restriction | High/critical ops blocked outside window |
-| **change_limits** | Parameter thresholds | Operations exceeding limits blocked |
+| **change_limits** | Parameter thresholds | Reserved -- not enforced (logs a warning if configured) |
 
 ### Rules YAML Schema
 
@@ -97,17 +97,18 @@ maintenance_window:
   start: "HH:MM"               # Window start (24h format)
   end: "HH:MM"                 # Window end (wraps midnight)
 
-change_limits:
-  max_cpu_change_pct: <int>     # Max CPU change percentage
-  max_memory_change_pct: <int>  # Max memory change percentage
+change_limits:                  # Reserved -- not enforced; configuring these
+  max_cpu_change_pct: <int>     # only emits a "NOT enforced" warning (the
+  max_memory_change_pct: <int>  # engine has no before-state to compute deltas)
 ```
 
 ### Rule Evaluation Order
 
 1. Deny rules -- if any match, operation is blocked
 2. Maintenance window -- high/critical ops restricted to window hours
-3. Change limits -- parameter thresholds checked
-4. Default -- allow
+3. Default -- allow
+
+(change_limits is reserved and not enforced -- see the Rule Types table.)
 
 ### Hot-Reload
 
