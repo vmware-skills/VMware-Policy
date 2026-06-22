@@ -12,14 +12,20 @@ import logging
 import os
 import sqlite3
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from vmware_policy.paths import ops_path
+
 _log = logging.getLogger("vmware-policy.audit")
 
-_DEFAULT_DB = Path("~/.vmware/audit.db").expanduser()
+# Back-compat override hook. When None (default) the path resolves via
+# ops_path("audit.db") (honoring OPS_HOME). Downstream code/tests may set this
+# to a fixed Path to redirect the default DB — kept so the OPS_HOME refactor
+# does not break callers that monkeypatch `_DEFAULT_DB`.
+_DEFAULT_DB: Path | None = None
+
 _MAX_DB_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
 _MAX_ARCHIVES = 5
 _BUSY_TIMEOUT_MS = 5000
@@ -37,13 +43,26 @@ CREATE TABLE IF NOT EXISTS audit_log (
     agent       TEXT    NOT NULL DEFAULT 'unknown',
     workflow_id TEXT    NOT NULL DEFAULT '',
     user        TEXT    NOT NULL DEFAULT 'unknown',
-    risk_level  TEXT    NOT NULL DEFAULT 'low'
+    risk_level  TEXT    NOT NULL DEFAULT 'low',
+    rationale   TEXT    NOT NULL DEFAULT '',
+    approved_by TEXT    NOT NULL DEFAULT '',
+    risk_tier   TEXT    NOT NULL DEFAULT ''
 )
 """
 
+# Columns added after the original schema shipped. Each is applied with an
+# idempotent ALTER TABLE so pre-existing audit.db files migrate in place (a
+# fresh DB already has them via _CREATE_TABLE). Accountability fields per the
+# SOC2 / 等保 "who authorized this, and why" requirement.
+_MIGRATIONS = (
+    ("rationale", "TEXT NOT NULL DEFAULT ''"),
+    ("approved_by", "TEXT NOT NULL DEFAULT ''"),
+    ("risk_tier", "TEXT NOT NULL DEFAULT ''"),
+)
+
 _INSERT = """\
-INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -54,7 +73,10 @@ class AuditEngine:
     """
 
     def __init__(self, db_path: Path | str | None = None) -> None:
-        self._path = Path(db_path).expanduser() if db_path else _DEFAULT_DB
+        if db_path:
+            self._path = Path(db_path).expanduser()
+        else:
+            self._path = _DEFAULT_DB or ops_path("audit.db")
         self._ok = False
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -68,8 +90,21 @@ class AuditEngine:
         conn = self._connect()
         conn.execute(_CREATE_TABLE)
         conn.execute("PRAGMA journal_mode=WAL")
+        self._migrate(conn)
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Add columns introduced after the original schema, in place.
+
+        Idempotent: only adds a column the table is missing, so existing
+        audit.db files gain rationale/approved_by/risk_tier without losing rows.
+        """
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(audit_log)")}
+        for name, decl in _MIGRATIONS:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE audit_log ADD COLUMN {name} {decl}")  # nosec B608
 
     def _harden_permissions(self) -> None:
         """Restrict the audit dir to 0700 and DB files (incl. WAL/SHM) to 0600.
@@ -106,9 +141,17 @@ class AuditEngine:
         workflow_id: str = "",
         user: str = "",
         risk_level: str = "low",
+        rationale: str = "",
+        approved_by: str = "",
+        risk_tier: str = "",
     ) -> None:
         """Write one audit record.  Never raises — swallows errors to avoid
-        disrupting the actual tool execution."""
+        disrupting the actual tool execution.
+
+        rationale / approved_by / risk_tier carry the accountability trail:
+        *why* a change was made, *who* signed off, and the *approval tier* the
+        policy engine assigned (none/confirm/dual/review).
+        """
         if not self._ok:
             return
         try:
@@ -128,6 +171,9 @@ class AuditEngine:
                     workflow_id,
                     user or _current_user(),
                     risk_level,
+                    rationale,
+                    approved_by,
+                    risk_tier,
                 ),
             )
             conn.commit()

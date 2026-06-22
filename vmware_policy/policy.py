@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_log = logging.getLogger("vmware-policy.policy")
+from vmware_policy.paths import ops_path
 
-_DEFAULT_RULES_PATH = Path("~/.vmware/rules.yaml").expanduser()
+_log = logging.getLogger("vmware-policy.policy")
 
 # ── Data structures ───────────────────────────────────────────────────
 
@@ -28,9 +28,38 @@ class PolicyResult:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class TierDecision:
+    """Graduated-autonomy outcome: the approval tier an operation needs.
+
+    tier is one of APPROVAL_TIERS. ``requires_approver`` is True for tiers that
+    must carry a named human approver (dual / review) — the decorator denies
+    such calls when no approver is recorded.
+    """
+
+    tier: str = "none"
+    rule: str = "default"
+    reason: str = ""
+
+    @property
+    def requires_approver(self) -> bool:
+        return self.tier in ("dual", "review")
+
+
 # ── Risk levels ───────────────────────────────────────────────────────
 
 RISK_LEVELS = ("low", "medium", "high", "critical")
+
+# Graduated autonomy tiers, least → most oversight.
+#   none    — no gate (dev / low-risk)
+#   confirm — CLI double-confirm (informational at the harness layer)
+#   dual    — requires a named approver to be recorded (two-person rule)
+#   review  — requires a named approver + intended for explicit human review
+APPROVAL_TIERS = ("none", "confirm", "dual", "review")
+
+# Param keys whose string values are treated as resource tags / placement for
+# tier matching (e.g. a VM's folder or environment tag: prod/staging/dev).
+_TAG_PARAM_KEYS = ("tag", "tags", "folder", "resource_tag", "env_tier", "environment")
 
 
 def risk_requires_confirmation(risk_level: str, env: str = "") -> bool:
@@ -57,7 +86,7 @@ class PolicyEngine:
     """
 
     def __init__(self, rules_path: Path | str | None = None) -> None:
-        self._path = Path(rules_path).expanduser() if rules_path else _DEFAULT_RULES_PATH
+        self._path = Path(rules_path).expanduser() if rules_path else ops_path("rules.yaml")
         self._rules: dict[str, Any] = {}
         self._mtime: float = 0.0
         self._load_rules()
@@ -181,6 +210,69 @@ class PolicyEngine:
 
         return PolicyResult(allowed=True, rule="default_allow")
 
+    def required_approval_tier(
+        self,
+        operation: str,
+        *,
+        env: str = "",
+        risk_level: str = "low",
+        params: dict[str, Any] | None = None,
+    ) -> TierDecision:
+        """Return the approval tier this operation needs (graduated autonomy).
+
+        Evaluated from a ``risk_tiers`` list in rules.yaml — each entry matches
+        on operation glob / environment / resource tag / minimum risk and maps
+        to a tier (none/confirm/dual/review). The FIRST matching, HIGHEST tier
+        wins so a prod-tagged destructive op can't be down-graded by a looser
+        rule listed earlier. No config → tier ``none`` (backward compatible).
+        """
+        self._maybe_reload()
+        tiers = self._rules.get("risk_tiers") if self._rules else None
+        if not tiers:
+            return TierDecision(tier="none", rule="no_tiers")
+
+        tags = _extract_tags(params)
+        best: TierDecision | None = None
+        for rule in tiers:
+            tier = str(rule.get("tier", "")).lower()
+            if tier not in APPROVAL_TIERS:
+                continue
+            if not self._tier_rule_matches(rule, operation, env, risk_level, tags):
+                continue
+            if best is None or APPROVAL_TIERS.index(tier) > APPROVAL_TIERS.index(best.tier):
+                best = TierDecision(
+                    tier=tier,
+                    rule=str(rule.get("name", "risk_tier")),
+                    reason=str(rule.get("reason", "")),
+                )
+        return best or TierDecision(tier="none", rule="no_tier_match")
+
+    def _tier_rule_matches(
+        self,
+        rule: dict[str, Any],
+        operation: str,
+        env: str,
+        risk_level: str,
+        tags: set[str],
+    ) -> bool:
+        """Match a risk_tiers entry against the current call."""
+        if "operations" in rule:
+            ops = rule["operations"]
+            if not ops or not any(self._pattern_match(op, operation) for op in ops):
+                return False
+        envs = rule.get("environments", [])
+        if envs and env and env not in envs:
+            return False
+        if envs and not env:
+            return False  # rule scoped to envs but call has none → no match
+        rule_tags = {str(t) for t in (rule.get("tags") or [])}
+        if rule_tags and not (rule_tags & tags):
+            return False
+        min_risk = rule.get("min_risk_level")
+        if min_risk and RISK_LEVELS.index(risk_level) < RISK_LEVELS.index(min_risk):
+            return False
+        return True
+
     def _rule_matches(
         self,
         rule: dict[str, Any],
@@ -259,6 +351,27 @@ class PolicyEngine:
                 operation, list(params.keys()),
             )
         return None
+
+
+def _extract_tags(params: dict[str, Any] | None) -> set[str]:
+    """Collect resource-tag-like string values from params for tier matching.
+
+    Looks at a fixed set of keys (tag/tags/folder/...) and flattens list values
+    so ``{"tags": ["prod", "pci"]}`` and ``{"folder": "prod"}`` both yield
+    ``{"prod", ...}``.
+    """
+    if not params:
+        return set()
+    out: set[str] = set()
+    for key in _TAG_PARAM_KEYS:
+        if key not in params:
+            continue
+        val = params[key]
+        if isinstance(val, str):
+            out.add(val)
+        elif isinstance(val, (list, tuple, set)):
+            out.update(str(v) for v in val)
+    return out
 
 
 # ── Singleton ─────────────────────────────────────────────────────────

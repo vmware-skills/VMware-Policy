@@ -1,3 +1,34 @@
+## v1.6.0 (unreleased) — trust architecture (token budget, accountability, risk tiers, undo)
+
+Substantial, backward-compatible harness upgrades from the 2026-06-22 strategy review
+(BACKLOG.md P0, direction A). All additive — existing skills keep working unchanged
+until they opt into the new features. **Affects the whole family on next install.**
+
+### Added
+- **Token/call hard budget + runaway breaker** (`budget.py`). Per-process ceilings via
+  `VMWARE_MAX_TOOL_CALLS` / `VMWARE_MAX_TOOL_SECONDS` (opt-in), plus an on-by-default
+  guard that trips when the same `(tool, params)` is hammered in a short window
+  (`VMWARE_RUNAWAY_MAX`=25 / `VMWARE_RUNAWAY_WINDOW_SEC`=120). Raises `BudgetExceeded`
+  (a hard stop) — the structural fix for the "delete one snapshot, burn 26k tokens"
+  unbounded-call failure mode. Enforced from `@vmware_tool`.
+- **Audit accountability fields** (`audit.py`): `rationale`, `approved_by`, `risk_tier`
+  columns, with in-place ALTER migration for existing audit.db files. The decorator
+  sources rationale/approver from `VMWARE_AUDIT_RATIONALE` / `VMWARE_AUDIT_APPROVED_BY`.
+- **Graduated-autonomy risk tiers** (`policy.py` `required_approval_tier`): rules.yaml
+  `risk_tiers` map environment / resource tag / min-risk → tier (none/confirm/dual/review);
+  dual/review tiers are denied without a recorded approver.
+- **Undo-token primitive** (`undo.py`): `@vmware_tool(undo=...)` records a write's inverse
+  descriptor to `~/.vmware/undo.db` and tags the result with `_undo_id`. CLI
+  `vmware-audit undo-list` / `undo-show`. Recording only — execution stays in vmware-pilot.
+- **Relocatable state dir** (`paths.py` `ops_home()`): `OPS_HOME` relocates harness state
+  (default `~/.vmware`, fully back-compat); budget env vars accept an `OPS_*` alias.
+
+### Notes
+- `_bind_params` now applies declared defaults so env scoping + risk-tier matching see the
+  effective target/tags even when a caller relied on a default value.
+- 120 tests pass; bandit 0 Medium+. Version/publish coordination with the family is a
+  release-time decision (candidate: family-wide v1.6.0).
+
 ## v1.5.37 (2026-06-12) — backlog: stop advertising an unimplemented feature
 
 ### Changed

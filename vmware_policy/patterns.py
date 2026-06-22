@@ -34,9 +34,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-_log = logging.getLogger("vmware-policy.patterns")
+from vmware_policy.paths import ops_path
 
-_DEFAULT_PATTERNS_DIR = Path("~/.vmware/auto-remediation-patterns/").expanduser()
+_log = logging.getLogger("vmware-policy.patterns")
 
 _REQUIRED_TOP_LEVEL_KEYS = ("schema_version", "pattern_id", "classification", "action")
 _REQUIRED_CLASSIFICATION_KEYS = ("risk", "reversible", "repeatable")
@@ -106,7 +106,10 @@ class PatternEngine:
     """Singleton pattern matcher integrated with @vmware_tool."""
 
     def __init__(self, patterns_dir: Path | str | None = None) -> None:
-        self._dir = Path(patterns_dir).expanduser() if patterns_dir else _DEFAULT_PATTERNS_DIR
+        self._dir = (
+            Path(patterns_dir).expanduser() if patterns_dir
+            else ops_path("auto-remediation-patterns")
+        )
         self._patterns: dict[str, Pattern] = {}
         self._mtimes: dict[Path, float] = {}
         # _counters keyed by (pattern_id, target) — target may be ""

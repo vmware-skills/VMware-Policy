@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -31,11 +30,11 @@ console = Console()
 @app.command()
 def log(
     last: int = typer.Option(20, help="Number of recent entries to show"),
-    skill: Optional[str] = typer.Option(None, help="Filter by skill name"),
-    tool: Optional[str] = typer.Option(None, help="Filter by tool name"),
-    status: Optional[str] = typer.Option(None, help="Filter by status (ok/denied/error)"),
-    workflow_id: Optional[str] = typer.Option(None, "--workflow-id", help="Filter by workflow ID"),
-    since: Optional[str] = typer.Option(None, help="Show entries after date (ISO format)"),
+    skill: str | None = typer.Option(None, help="Filter by skill name"),
+    tool: str | None = typer.Option(None, help="Filter by tool name"),
+    status: str | None = typer.Option(None, help="Filter by status (ok/denied/error)"),
+    workflow_id: str | None = typer.Option(None, "--workflow-id", help="Filter by workflow ID"),
+    since: str | None = typer.Option(None, help="Show entries after date (ISO format)"),
 ) -> None:
     """Show recent audit log entries."""
     engine = get_engine()
@@ -79,8 +78,8 @@ def log(
 @app.command()
 def export(
     format: str = typer.Option("json", help="Export format: json"),
-    skill: Optional[str] = typer.Option(None, help="Filter by skill"),
-    since: Optional[str] = typer.Option(None, help="Export entries after date"),
+    skill: str | None = typer.Option(None, help="Filter by skill"),
+    since: str | None = typer.Option(None, help="Export entries after date"),
     limit: int = typer.Option(10000, help="Max entries to export"),
 ) -> None:
     """Export audit log as JSON to stdout."""
@@ -113,6 +112,60 @@ def stats(
             console.print(f"    [cyan]{sk}[/cyan]: {count}")
 
     console.print()
+
+
+@app.command("undo-list")
+def undo_list(
+    status: str | None = typer.Option(None, help="Filter by status (recorded/applied/expired)"),
+    last: int = typer.Option(20, help="Number of recent undo records to show"),
+) -> None:
+    """List recorded undo tokens (inverse operations for prior writes)."""
+    from vmware_policy.undo import get_undo_store
+
+    rows = get_undo_store().list(status=status, limit=last)
+    if not rows:
+        console.print("[dim]No undo records found.[/dim]")
+        return
+    table = Table(title=f"Undo Log (last {len(rows)})", show_lines=False)
+    table.add_column("Undo ID", style="cyan", width=16)
+    table.add_column("Time", style="dim", width=20)
+    table.add_column("Original", style="green", width=22)
+    table.add_column("Inverse", style="yellow", width=22)
+    table.add_column("Status", width=10)
+    for row in rows:
+        table.add_row(
+            row["undo_id"],
+            row["ts"][:19].replace("T", " "),
+            f"{row['skill']}.{row['tool']}",
+            f"{row['undo_skill']}.{row['undo_tool']}",
+            row["status"],
+        )
+    console.print(table)
+
+
+@app.command("undo-show")
+def undo_show(undo_id: str) -> None:
+    """Show the exact inverse operation recorded for an undo token.
+
+    Prints the inverse tool + params an operator (or vmware-pilot) can replay to
+    roll the change back. This command does NOT execute anything.
+    """
+    from vmware_policy.undo import get_undo_store
+
+    rec = get_undo_store().get(undo_id)
+    if not rec:
+        console.print(f"[red]No undo record with id '{undo_id}'.[/red]")
+        raise typer.Exit(1)
+    console.print(f"\n[bold]Undo {undo_id}[/bold] (status: {rec['status']})")
+    console.print(f"  Original : [green]{rec['skill']}.{rec['tool']}[/green]")
+    console.print(f"  Inverse  : [yellow]{rec['undo_skill']}.{rec['undo_tool']}[/yellow]")
+    console.print(f"  Params   : {rec['undo_params']}")
+    if rec["note"]:
+        console.print(f"  Note     : {rec['note']}")
+    console.print(
+        "\n[dim]Replay is not automatic — run the inverse via the owning skill "
+        "or a vmware-pilot rollback workflow.[/dim]\n"
+    )
 
 
 if __name__ == "__main__":

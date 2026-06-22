@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import re
 import time
 import traceback
@@ -32,6 +33,7 @@ from functools import wraps
 from typing import Any
 
 from vmware_policy.audit import detect_agent, get_engine
+from vmware_policy.budget import BudgetExceeded, get_budget
 from vmware_policy.patterns import PatternMatch, get_pattern_engine
 from vmware_policy.policy import PolicyResult, get_policy_engine
 from vmware_policy.sanitize import sanitize
@@ -54,6 +56,7 @@ def vmware_tool(
     idempotent: bool = False,
     timeout_seconds: int = 300,
     sensitive_params: list[str] | None = None,
+    undo: Any = None,
 ) -> Any:
     """Decorator for all VMware MCP tool functions.
 
@@ -71,6 +74,11 @@ def vmware_tool(
         timeout_seconds: Maximum execution time before warning — exceeding it
             logs a warning (no hard cancellation).
         sensitive_params: Parameter names to redact in audit logs.
+        undo: Optional callable ``(params, result) -> dict | None`` returning an
+            inverse descriptor ``{"tool", "params", "skill"?, "note"?}``. On a
+            successful call the inverse is recorded to ~/.vmware/undo.db and the
+            result dict gains an ``_undo_id``. Return None for "no safe inverse".
+            Recording only — execution is vmware-pilot's job.
     """
     _sensitive = set(sensitive_params or [])
 
@@ -86,12 +94,13 @@ def vmware_tool(
             @wraps(func)
             async def wrapper(*args: Any, **kwargs: Any) -> Any:
                 state = _CallState(
-                    func, args, kwargs, signature, _sensitive, risk_level, timeout_seconds
+                    func, args, kwargs, signature, _sensitive, risk_level,
+                    timeout_seconds, undo,
                 )
                 try:
                     _pre_check(state)
                     return _annotate_result(state, await func(*args, **kwargs))
-                except PolicyDenied:
+                except (PolicyDenied, BudgetExceeded):
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)
@@ -102,12 +111,13 @@ def vmware_tool(
             @wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 state = _CallState(
-                    func, args, kwargs, signature, _sensitive, risk_level, timeout_seconds
+                    func, args, kwargs, signature, _sensitive, risk_level,
+                    timeout_seconds, undo,
                 )
                 try:
                     _pre_check(state)
                     return _annotate_result(state, func(*args, **kwargs))
-                except PolicyDenied:
+                except (PolicyDenied, BudgetExceeded):
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)
@@ -144,6 +154,7 @@ class _CallState:
         "skill", "tool_name", "agent", "start", "status", "result",
         "policy_result", "pattern_match", "audit", "policy",
         "safe_params", "env", "risk_level", "timeout_seconds",
+        "rationale", "approved_by", "risk_tier", "undo",
     )
 
     def __init__(
@@ -155,7 +166,9 @@ class _CallState:
         sensitive: set[str],
         risk_level: str,
         timeout_seconds: int,
+        undo: Any = None,
     ) -> None:
+        self.undo = undo
         self.skill = _infer_skill(func)
         self.tool_name = func.__name__
         self.agent = detect_agent()
@@ -176,6 +189,14 @@ class _CallState:
         env = params.get("target", params.get("env", ""))
         self.env = str(env) if env else ""
 
+        # Accountability trail (SOC2 / 等保: who authorized this, and why).
+        # Sourced from env so an approval gate / pilot can inject context
+        # without changing every tool signature. risk_tier is filled by the
+        # policy pre-check (graduated autonomy).
+        self.rationale = os.environ.get("VMWARE_AUDIT_RATIONALE", "")
+        self.approved_by = os.environ.get("VMWARE_AUDIT_APPROVED_BY", "")
+        self.risk_tier = ""
+
 
 def _bind_params(
     signature: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]
@@ -187,6 +208,10 @@ def _bind_params(
     """
     try:
         bound = signature.bind_partial(*args, **kwargs)
+        # Apply declared defaults so env scoping and risk-tier matching see the
+        # effective target/tags even when the caller relied on a default value
+        # (bind_partial alone only captures explicitly-passed arguments).
+        bound.apply_defaults()
     except TypeError:
         return dict(kwargs)
     params: dict[str, Any] = {}
@@ -222,6 +247,41 @@ def _pre_check(state: _CallState) -> None:
         }
         raise PolicyDenied(state.policy_result)
 
+    # Graduated autonomy — what approval tier does this op need? Record it on
+    # the audit trail, and enforce: tiers that require a named approver (dual /
+    # review) are denied when none was recorded (VMWARE_AUDIT_APPROVED_BY).
+    tier = state.policy.required_approval_tier(
+        state.tool_name,
+        env=state.env,
+        risk_level=state.risk_level,
+        params=state.safe_params,
+    )
+    state.risk_tier = tier.tier
+    if tier.requires_approver and not state.approved_by:
+        reason = (
+            f"Operation '{state.tool_name}' on '{state.env or 'target'}' requires "
+            f"'{tier.tier}' approval (rule: {tier.rule}) but no approver is recorded. "
+            f"Set VMWARE_AUDIT_APPROVED_BY to the authorizing human (and "
+            f"VMWARE_AUDIT_RATIONALE to why) before retrying."
+        )
+        if tier.reason:
+            reason += f" Policy note: {tier.reason}"
+        denial = PolicyResult(allowed=False, rule=f"approval_tier:{tier.tier}", reason=reason)
+        state.policy_result = denial
+        state.status = "denied"
+        state.result = {"error": reason, "rule": denial.rule}
+        raise PolicyDenied(denial)
+
+    # Budget / runaway guard — only for calls policy already allowed, so denied
+    # calls do not count. A trip raises BudgetExceeded (a hard stop); record the
+    # denial on state so _finalize audits it.
+    try:
+        get_budget().check_and_record(state.tool_name, state.safe_params)
+    except BudgetExceeded as exc:
+        state.status = "budget_exceeded"
+        state.result = {"error": exc.reason, "rule": exc.rule}
+        raise
+
     try:
         state.pattern_match = get_pattern_engine().match(
             skill=state.skill, tool=state.tool_name, target=state.env
@@ -231,7 +291,12 @@ def _pre_check(state: _CallState) -> None:
 
 
 def _annotate_result(state: _CallState, result: Any) -> Any:
-    """Record the result and surface pattern context to the caller."""
+    """Record the result, surface pattern context, and record an undo token.
+
+    Runs only on the success path (the wrapper calls it with the function's
+    return value), so a recorded undo always corresponds to a change that
+    actually happened.
+    """
     state.result = result
     if (
         state.pattern_match
@@ -240,7 +305,40 @@ def _annotate_result(state: _CallState, result: Any) -> Any:
     ):
         result.setdefault("_pattern_id", state.pattern_match.pattern.pattern_id)
         result.setdefault("_pattern_armed", True)
+    _record_undo(state, result)
     return result
+
+
+def _record_undo(state: _CallState, result: Any) -> None:
+    """Compute and persist the inverse descriptor for a successful write.
+
+    Best-effort: a broken undo callable or store must never fail the call.
+    Attaches ``_undo_id`` to dict results so the agent / pilot can reference it.
+    """
+    if state.undo is None:
+        return
+    try:
+        descriptor = state.undo(state.safe_params, result)
+    except Exception:  # noqa: BLE001 — undo computation must not fail the call
+        _log.warning("undo callable for %s.%s raised", state.skill, state.tool_name,
+                     exc_info=True)
+        return
+    if not descriptor:
+        return
+    try:
+        from vmware_policy.undo import get_undo_store
+
+        undo_id = get_undo_store().record(
+            skill=state.skill,
+            tool=state.tool_name,
+            undo_descriptor=descriptor,
+            orig_params=state.safe_params,
+        )
+        if undo_id and isinstance(result, dict):
+            result.setdefault("_undo_id", undo_id)
+    except Exception:  # noqa: BLE001 — recording is best-effort
+        _log.warning("failed to record undo for %s.%s", state.skill, state.tool_name,
+                     exc_info=True)
 
 
 def _capture_error(state: _CallState, exc: Exception) -> None:
@@ -259,6 +357,12 @@ def _capture_error(state: _CallState, exc: Exception) -> None:
 def _finalize(state: _CallState) -> None:
     """Audit + circuit-breaker bookkeeping. Runs in the wrapper's finally."""
     duration = int((time.time() - state.start) * 1000)
+
+    # Accumulate wall-time toward the cumulative time budget (best-effort).
+    try:
+        get_budget().add_duration(time.time() - state.start)
+    except Exception:  # noqa: BLE001 — bookkeeping must never fail the call
+        pass
 
     # timeout_seconds is advisory: exceeding it logs a warning, no hard
     # cancellation (cancelling mid-flight vSphere/NSX calls is worse).
@@ -295,6 +399,9 @@ def _finalize(state: _CallState) -> None:
         agent=state.agent,
         user="",
         risk_level=state.risk_level,
+        rationale=state.rationale,
+        approved_by=state.approved_by,
+        risk_tier=state.risk_tier,
     )
 
 
