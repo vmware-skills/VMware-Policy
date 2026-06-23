@@ -1,3 +1,7 @@
+## v1.6.1 (2026-06-24) — version alignment
+
+No functional changes — version bumped to stay aligned with the VMware skill family release.
+
 ## v1.6.0 (unreleased) — trust architecture (token budget, accountability, risk tiers, undo)
 
 Substantial, backward-compatible harness upgrades from the 2026-06-22 strategy review
