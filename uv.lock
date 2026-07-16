@@ -378,7 +378,7 @@ wheels = [
 
 [[package]]
 name = "vmware-policy"
-version = "1.5.35"
+version = "1.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },
