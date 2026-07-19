@@ -209,6 +209,10 @@ class TestPositionalArgs:
             "    reason: prod is frozen\n"
         )
         policy_mod._engine = PolicyEngine(rules)
+        # env now comes from the target's declared environment, not its name.
+        from vmware_policy.environment import set_environment_resolver
+
+        set_environment_resolver(lambda target: "prod" if "prod" in target else "lab")
 
         @vmware_tool
         def reconfigure(vm_name: str, target: str = "") -> str:
@@ -452,3 +456,60 @@ class TestV1535Fixes:
         # Zero-width-space (Cf) padding must not shield the payload either
         padded = "​" * 600 + "payload"
         assert sanitize(padded) == "payload"
+
+
+class TestPolicyGlobMatching:
+    """Leading-wildcard patterns silently matched nothing (2026-07-18).
+
+    ``_pattern_match`` handled only a trailing ``*`` — every other pattern fell
+    through to an equality test. So a rule written ``operations: ["*_delete"]``
+    compiled fine, read correctly, and never fired. A deny rule that looks
+    configured but is inert is worse than no rule at all, because the operator
+    stops looking. Fixed by delegating to ``fnmatch.fnmatchcase``.
+    """
+
+    @staticmethod
+    def _match(pattern: str, value: str) -> bool:
+        from vmware_policy.policy import PolicyEngine
+
+        return PolicyEngine._pattern_match(pattern, value)
+
+    def test_trailing_wildcard_still_works(self):
+        assert self._match("delete_*", "delete_segment")
+        assert not self._match("delete_*", "vm_delete")
+
+    def test_leading_wildcard_now_matches(self):
+        assert self._match("*_delete", "vm_delete")
+        assert self._match("*_delete", "cluster_delete")
+        assert not self._match("*_delete", "delete_segment")
+
+    def test_infix_wildcard_now_matches(self):
+        assert self._match("vm_*_snapshot", "vm_create_snapshot")
+        assert not self._match("vm_*_snapshot", "vm_create_plan")
+
+    def test_bare_star_matches_everything(self):
+        assert self._match("*", "anything_at_all")
+
+    def test_exact_name_still_requires_exact_match(self):
+        assert self._match("vm_delete", "vm_delete")
+        assert not self._match("vm_delete", "vm_delete_snapshot")
+
+    def test_matching_is_case_sensitive(self):
+        """Tool names are snake_case identifiers; a case-insensitive policy
+        would match things the operator never wrote."""
+        assert not self._match("vm_*", "VM_Delete")
+
+    def test_deny_rule_with_leading_wildcard_actually_denies(self, tmp_path):
+        """End-to-end: the shape that was silently inert before."""
+        from vmware_policy.policy import PolicyEngine
+
+        rules = tmp_path / "rules.yaml"
+        rules.write_text(
+            "deny:\n"
+            "  - name: no-deletes\n"
+            '    operations: ["*_delete"]\n'
+            '    reason: "blocked"\n'
+        )
+        engine = PolicyEngine(rules_path=rules)
+        assert engine.check_allowed("vm_delete").allowed is False
+        assert engine.check_allowed("vm_info").allowed is True

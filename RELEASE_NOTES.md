@@ -1,3 +1,121 @@
+## v1.8.0 (2026-07-18) — read-only mode, policy baseline that actually loads, list envelope
+
+Driven by [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31), where an
+operator running Llama 3.3 70B (Goose / OpenShift AI, on-prem H100) had to hand-write 17
+prompt guardrails to make tool calling reliable. A prompt is advisory; a model can ignore
+it. Every guardrail that could be moved into the harness has been.
+
+### Added
+
+- **Read-only mode** (`readonly.py`). `apply_read_only_gate(mcp, skill, config_flag)`
+  removes every write tool from a FastMCP registry, so `list_tools()` never offers them
+  and the model cannot call what it cannot see. Resolution order: per-skill env
+  (`VMWARE_<SKILL>_READ_ONLY`) → family env (`VMWARE_READ_ONLY`) → config `read_only:` →
+  off. **Off by default** — nothing changes unless an operator turns it on.
+  - Classification prefers the `[READ]`/`[WRITE]` docstring marker over the
+    `readOnlyHint` annotation: the marker covers 245/245 tools, while vmware-harden and
+    vmware-debug register through a `build_server()` factory that passes no annotations.
+  - `FORCE_WRITE` overrides tools whose marker under-reports their effect. Currently three,
+    all the same shape — read-only upstream, write-effecting locally: `vm_guest_download`
+    reads only from the guest, but writes an operator-supplied local path and takes guest
+    credentials; `get_supervisor_kubeconfig` and `get_tkc_kubeconfig` materialise a
+    session-token credential file at a model-supplied local path.
+  - **Fail-closed throughout.** An unenumerable registry or a removal that does not
+    take effect aborts startup with `ReadOnlyGateError` rather than running open. An
+    unparseable switch value (`VMWARE_READ_ONLY=ture`) does not abort — it resolves to
+    *on* with a warning, so a typo locks the deployment down instead of leaving it open.
+
+- **List-result envelope** (`envelope.py`). `paginated(items, limit, total, **extra)`
+  returns `{items, returned, limit, total, truncated, hint}` — always all six keys,
+  unknown values as explicit `None`. Fixes the reported failure where long responses were
+  summarised as "no data returned": a bare `list[dict]` cannot distinguish a complete
+  answer from page one, so the model guessed. Not yet adopted by the skills.
+
+- **Declared environments** (`environment.py`). Skills register
+  `set_environment_resolver(fn)` mapping a target name to the `environment:` its config
+  declares, so policy scopes by a real declaration instead of by the target's name.
+
+### Fixed
+
+- **Policy rules never loaded on a fresh install.** The engine read only
+  `~/.vmware/rules.yaml`; `rules_default.yaml` shipped as a fully commented-out template
+  no engine ever read. Every deny rule, maintenance window and approval tier was
+  therefore inert for anyone who had not hand-authored a rules file — which is to say,
+  the entire graduated-autonomy engine added in v1.6.0 had never once run. A missing user
+  file now falls back to the packaged baseline. A user file that exists but fails to
+  parse does NOT fall back (applying rules the operator never wrote while theirs are
+  broken is the wrong surprise); `active_rules_source()` and `vmware-audit policy` report
+  which case you are in.
+
+- **Glob patterns with a leading wildcard silently matched nothing.**
+  `_pattern_match` honoured only a trailing `*`; everything else fell through to string
+  equality. A rule written `operations: ["*_delete"]` parsed fine, read correctly, and
+  never fired. Now delegates to `fnmatch.fnmatchcase`, so `*_delete` and `vm_*_snapshot`
+  work. Environment patterns match by glob too, for the same reason.
+
+- **Pre-release review** (same day, before publish): warn-mode no longer bypasses deny
+  rules / maintenance windows; env-scoped deny rules no longer match undeclared targets
+  and now glob like tier rules; quoted `'false'` switch values parse correctly; unknown
+  risk levels and blank env-var values no longer crash or fail open; pattern-engine rate
+  limits stay keyed per target; VKS kubeconfig tools force-classified as writes.
+
+### Changed — migration, read this
+
+- **Approval tiers now ship active.** Writes at medium risk and above are stamped with a
+  `confirm` tier in the audit row (informational, never blocks). Irreversible operations
+  and guest execution against a target declaring `production`/`prod` require a named
+  approver via `VMWARE_AUDIT_APPROVED_BY` — a two-person rule that, until now, existed in
+  code but could not fire.
+
+- **`require_declared_environment: warn`** — the first half of a two-step migration.
+  A state-changing operation against a target that declares no `environment:` still runs,
+  but logs a warning naming the fix. **The next major release ships `true` and refuses
+  it.** Declare `environment:` on your targets now and that upgrade is a no-op:
+
+      targets:
+        prod-vc01:
+          host: vc01.corp.local
+          environment: production
+
+  Read-only operations are never affected, in either release. Preview what applies to a
+  target with `vmware-audit policy --operation vm_delete --env <env>`. Opt out entirely
+  with `require_declared_environment: false` or your own `rules.yaml`.
+
+- **Rules written against the old `environments:` semantics go quiet.** Before 1.8.0,
+  `environments:` was matched against the *target name*; a rule written
+  `environments: ["prod-vc01"]` stops firing once that target declares
+  `environment: production`. Rewrite such rules against declared environment names.
+
+- **The missing-file kill-switch changed.** Pre-1.8.0, deleting `~/.vmware/rules.yaml`
+  disabled all policy ("allow all"); now it falls back to the packaged baseline. The
+  explicit off-switches are `require_declared_environment: false` in your own
+  `rules.yaml`, or an empty `rules.yaml` (`risk_tiers: []`), or
+  `VMWARE_POLICY_DISABLED=1` for a true emergency bypass.
+
+### Notes
+
+- Skills requiring these APIs must depend on `vmware-policy>=1.8.0`. Publish this package
+  to PyPI **before** the skills that import from it.
+- Version jumps 1.6.1 → 1.8.0 to rejoin the family line; the intervening releases were
+  skipped under the "no empty version bumps" exception, which no longer applies.
+
+### Fixed — pre-release review (2026-07-19)
+
+- **A typo in `min_risk_level` crashed every tool call in the family.** `_risk_index`
+  guarded the risk level declared in code, but the level an operator hand-writes in
+  `rules.yaml` still reached a raw `RISK_LEVELS.index()`. `min_risk_level: mediun` — or
+  simply `MEDIUM` — raised `ValueError` out of `check_allowed` on every call in all 12
+  skills, naming neither the rule nor the file, and the audit row blamed the tool. This
+  is the first release in which rules actually load, so it is the first release in which
+  anyone writes that file. Values are now case- and whitespace-insensitive; an
+  unrecognised one widens the rule (deny more, require a higher tier) with a warning,
+  rather than narrowing it to the point of never firing.
+- **`vmware-audit policy` reported ENFORCED for a switch that was off.** The command
+  branched on truthiness while the engine parses three values, so the quoted string
+  `'false'` printed "ENFORCED" directly above an "allowed" verdict for the same call. It
+  now branches on `_parse_requirement` and prints an explicit OFF, which is
+  distinguishable from the key being absent.
+
 ## v1.6.1 (2026-06-24) — version alignment
 
 No functional changes — version bumped to stay aligned with the VMware skill family release.

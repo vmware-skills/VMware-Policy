@@ -1,31 +1,140 @@
-# VMware Policy — Default Rules
-# Copy to ~/.vmware/rules.yaml and customize per environment.
+# VMware Policy — shipped baseline
+#
+# This file is LOADED AUTOMATICALLY when you have no ~/.vmware/rules.yaml.
+# Write your own to take full control — a user file replaces this one entirely
+# and is never merged with it.
+#
+# Check which rules are actually in force:
+#     vmware-audit policy
 #
 # Rule evaluation order:
-#   1. deny rules (if any match → operation blocked)
-#   2. maintenance_window (high/critical ops restricted to window)
-#   3. default → allow
+#   1. deny rules            (if any match → operation blocked)
+#   2. maintenance_window    (high/critical ops restricted to the window)
+#   3. risk_tiers            (approval tier required for the operation)
+#   4. default               → allow
+
+# ── Approval tiers (graduated autonomy) ───────────────────────────────
+#
+# Tiers, least → most oversight:
+#   none    — no gate
+#   confirm — recorded in the audit row; does NOT block
+#   dual    — requires a named approver (two-person rule); BLOCKS without one
+#   review  — requires a named approver, intended for explicit human review
+#
+# A named approver comes from VMWARE_AUDIT_APPROVED_BY (paired with
+# VMWARE_AUDIT_RATIONALE, which is recorded alongside it).
+#
+# The highest matching tier wins, so a loose rule listed first cannot downgrade
+# a stricter one below it.
+#
+# WHAT THIS BASELINE CHANGES — AND WHAT IS COMING
+# -----------------------------------------------
+# NOTHING IS BLOCKED IN THIS RELEASE. This is the migration window.
+#
+#   * READ-ONLY WORK IS NEVER GATED. Inventory, alarms, metrics, health — none
+#     of it is affected by this file, now or later.
+#
+#   * WRITES AGAINST A TARGET THAT DECLARES NO ENVIRONMENT STILL RUN, but log a
+#     warning naming the fix. THE NEXT MAJOR RELEASE WILL REFUSE THEM. Add
+#     `environment:` to each target now and the upgrade is a no-op for you.
+#
+#   * ONCE DECLARED, nothing changes for non-production targets beyond the risk
+#     tier appearing in the audit log. A target labelled production additionally
+#     requires a named approver for irreversible work and guest execution — that
+#     part IS active now.
+#
+# See exactly what applies to one of your targets:
+#     vmware-audit policy --operation vm_delete --env <your-target-env>
+#
+# To opt out completely, set require_declared_environment to false, or write
+# your own ~/.vmware/rules.yaml (a user file replaces this one entirely).
+
+# ── Require targets to declare their environment ──────────────────────
+#
+# Environment-scoped rules below can only protect a target whose environment is
+# known. Treating an unlabelled target as safe is what made those rules inert on
+# estates that never labelled anything, so an unlabelled target counts as
+# UNKNOWN. Declare it:
+#
+#     targets:
+#       prod-vc01:
+#         host: vc01.corp.local
+#         environment: production    # <- add this
+#
+# Accepted values:
+#   warn   — state-changing operations against an undeclared target run, but log
+#            a warning. This is the migration setting shipped today.
+#   true   — those operations are REFUSED. The next major release ships this.
+#   false  — the requirement is off entirely.
+#
+# Read-only operations are never affected by any of these.
+require_declared_environment: warn   # 1.8.0 warns; 2.0.0 will change this to true
+
+risk_tiers:
+  # Every write that @vmware_tool declared medium risk or above gets a tier, so
+  # the audit trail distinguishes "changed a VM" from "listed some VMs".
+  # Informational — this tier does not block.
+  - name: writes-are-recorded
+    operations: ["*"]
+    min_risk_level: medium
+    tier: confirm
+    reason: "Write operation — recorded with its risk tier in the audit log."
+
+  # Irreversible operations in production need a second person. This is the one
+  # rule that can refuse a call, and only where an environment is labelled.
+  - name: destructive-in-production-needs-two-people
+    operations:
+      - "*_delete"
+      - "delete_*"
+      - "vm_clean_slate"
+      - "cluster_remove_host"
+      - "batch_*"
+    environments: ["production", "prod"]
+    tier: dual
+    reason: >
+      Irreversible operation in production. Set VMWARE_AUDIT_APPROVED_BY to the
+      approving person and VMWARE_AUDIT_RATIONALE to why, or run it against a
+      non-production target.
+
+  # Guest execution runs arbitrary commands inside a VM with guest credentials —
+  # the widest blast radius in the family, and not reversible by an undo token.
+  - name: guest-execution-in-production-needs-two-people
+    operations:
+      - "vm_guest_exec"
+      - "vm_guest_provision"
+      - "vm_guest_upload"
+    environments: ["production", "prod"]
+    tier: dual
+    reason: >
+      Runs commands inside a production guest OS. Set VMWARE_AUDIT_APPROVED_BY
+      and VMWARE_AUDIT_RATIONALE, or target a non-production environment.
 
 # ── Deny rules ────────────────────────────────────────────────────────
+# Nothing is denied outright by default — denial is a policy decision only you
+# can make for your estate. Uncomment and adapt:
+#
 # deny:
 #   - name: no-delete-in-prod
 #     operations: ["delete_*", "cluster_delete"]
-#     environments: ["production"]
-#     reason: "Destructive operations are not allowed in production without approval"
+#     environments: ["production", "prod"]
+#     reason: "Destructive operations are not allowed in production"
 #
 #   - name: no-critical-outside-window
 #     min_risk_level: critical
-#     environments: ["production"]
-#     reason: "Critical operations require maintenance window"
+#     environments: ["production", "prod"]
+#     reason: "Critical operations require a maintenance window"
 
 # ── Maintenance window ────────────────────────────────────────────────
+# Restricts high/critical operations to a time range. Off by default.
+#
 # maintenance_window:
 #   start: "22:00"
 #   end: "06:00"
 
-# ── Change limits (reserved, not enforced) ────────────────────────────
-# change_limits is parsed but NOT enforced: the engine has no before-state
-# to compute deltas, so configuring it only emits a "NOT enforced" warning.
+# ── Change limits (reserved, NOT enforced) ────────────────────────────
+# Parsed but not enforced: the engine has no before-state to compute deltas
+# against, so configuring this only emits a "NOT enforced" warning.
+#
 # change_limits:
 #   max_cpu_change_pct: 20
 #   max_memory_change_pct: 50

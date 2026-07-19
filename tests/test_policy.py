@@ -7,12 +7,22 @@ from vmware_policy.policy import PolicyEngine
 
 @pytest.mark.unit
 class TestPolicyEngine:
-    def test_no_rules_allows_all(self, tmp_path):
-        rules_path = tmp_path / "nonexistent.yaml"
+    def test_empty_rules_allow_all(self, tmp_path):
+        """An operator who writes an empty rules file gets no enforcement."""
+        rules_path = tmp_path / "rules.yaml"
+        rules_path.write_text("")
         engine = PolicyEngine(rules_path)
         result = engine.check_allowed("delete_vm")
         assert result.allowed is True
         assert result.rule == "no_rules"
+
+    def test_missing_rules_file_uses_baseline_and_still_denies_nothing(self, tmp_path):
+        """A missing file now falls back to the packaged baseline (see
+        test_default_rules.py). The baseline defines approval tiers but no deny
+        rules, so nothing that previously succeeded is blocked."""
+        engine = PolicyEngine(tmp_path / "nonexistent.yaml")
+        assert engine.active_rules_source() == "packaged-default"
+        assert engine.check_allowed("delete_vm").allowed is True
 
     def test_deny_rule_blocks(self, tmp_path):
         rules = tmp_path / "rules.yaml"

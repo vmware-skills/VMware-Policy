@@ -15,6 +15,7 @@ import pytest
 from vmware_policy.audit import AuditEngine
 import vmware_policy.audit as audit_mod
 import vmware_policy.policy as policy_mod
+from vmware_policy.environment import set_environment_resolver
 from vmware_policy.decorators import PolicyDenied, vmware_tool
 from vmware_policy.policy import PolicyEngine
 
@@ -75,9 +76,19 @@ class TestTierResolution:
         )
         assert d.tier == "review"
 
-    def test_no_rules_is_none(self, tmp_path):
-        eng = PolicyEngine(tmp_path / "absent.yaml")
+    def test_empty_rules_is_none(self, tmp_path):
+        """An operator who writes `risk_tiers: []` opts out of tiers entirely."""
+        p = tmp_path / "rules.yaml"
+        p.write_text("risk_tiers: []\n")
+        eng = PolicyEngine(p)
         assert eng.required_approval_tier("vm_delete", env="production", risk_level="critical").tier == "none"
+
+    def test_missing_rules_file_uses_baseline_tiers(self, tmp_path):
+        """A missing file no longer means "no tiers" — it means the shipped
+        baseline, under which a production delete needs two people. Full
+        coverage of the baseline lives in test_default_rules.py."""
+        eng = PolicyEngine(tmp_path / "absent.yaml")
+        assert eng.required_approval_tier("vm_delete", env="production", risk_level="critical").tier == "dual"
 
 
 @pytest.mark.unit
@@ -88,7 +99,12 @@ class TestTierEnforcementThroughDecorator:
         p = tmp_path / "rules.yaml"
         p.write_text(_RULES)
         policy_mod._engine = PolicyEngine(p)
+        # Policy scopes by declared environment, not by target name. These tests
+        # pass the environment as the target, so declare each target's
+        # environment to be its own name.
+        set_environment_resolver(lambda target: target)
         yield
+        set_environment_resolver(None)
         audit_mod._engine = None
         policy_mod._engine = None
 

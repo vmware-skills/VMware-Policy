@@ -33,6 +33,7 @@ from functools import wraps
 from typing import Any
 
 from vmware_policy.audit import detect_agent, get_engine
+from vmware_policy.environment import resolve_environment
 from vmware_policy.budget import BudgetExceeded, get_budget
 from vmware_policy.patterns import PatternMatch, get_pattern_engine
 from vmware_policy.policy import PolicyResult, get_policy_engine
@@ -153,7 +154,7 @@ class _CallState:
     __slots__ = (
         "skill", "tool_name", "agent", "start", "status", "result",
         "policy_result", "pattern_match", "audit", "policy",
-        "safe_params", "env", "risk_level", "timeout_seconds",
+        "safe_params", "env", "target", "risk_level", "timeout_seconds",
         "rationale", "approved_by", "risk_tier", "undo",
     )
 
@@ -186,8 +187,20 @@ class _CallState:
         # log and participate in env scoping (previously only kwargs did).
         params = _bind_params(signature, args, kwargs)
         self.safe_params = _redact(params, sensitive)
-        env = params.get("target", params.get("env", ""))
-        self.env = str(env) if env else ""
+        # Policy scopes by *environment*, not by target name. The target names
+        # an estate uses ("prod-vc01", "vcenter-lab") never equal the words a
+        # rule is written against, so passing the name straight through left
+        # every environment-scoped rule unfireable. Resolve it to whatever the
+        # target's config declares; an empty target is forwarded so the skill's
+        # resolver can map it to its configured default_target.
+        #
+        # BOTH values are kept: the pattern engine's rate limits and circuit
+        # breakers are keyed per-TARGET, and feeding them the environment
+        # pooled every 'production' vCenter into one counter — one flaky
+        # target tripped the breaker for all of them (2026-07-18 review).
+        target = params.get("target", params.get("env", ""))
+        self.target = str(target) if target else ""
+        self.env = resolve_environment(self.target)
 
         # Accountability trail (SOC2 / 等保: who authorized this, and why).
         # Sourced from env so an approval gate / pilot can inject context
@@ -258,11 +271,17 @@ def _pre_check(state: _CallState) -> None:
     )
     state.risk_tier = tier.tier
     if tier.requires_approver and not state.approved_by:
+        # Relayed to a human by an agent mid-conversation — lead with what to
+        # do, in copy-paste form, before the policy mechanics.
         reason = (
-            f"Operation '{state.tool_name}' on '{state.env or 'target'}' requires "
-            f"'{tier.tier}' approval (rule: {tier.rule}) but no approver is recorded. "
-            f"Set VMWARE_AUDIT_APPROVED_BY to the authorizing human (and "
-            f"VMWARE_AUDIT_RATIONALE to why) before retrying."
+            f"'{state.tool_name}' on '{state.env or 'this target'}' needs "
+            f"'{tier.tier}' approval — a named human has to sign off before it "
+            f"runs (rule: {tier.rule}). To proceed:\n"
+            f"\n"
+            f'    export VMWARE_AUDIT_APPROVED_BY="<who approved this>"\n'
+            f'    export VMWARE_AUDIT_RATIONALE="<why>"\n'
+            f"\n"
+            f"then retry. Or run it against a non-production target instead."
         )
         if tier.reason:
             reason += f" Policy note: {tier.reason}"
@@ -284,7 +303,7 @@ def _pre_check(state: _CallState) -> None:
 
     try:
         state.pattern_match = get_pattern_engine().match(
-            skill=state.skill, tool=state.tool_name, target=state.env
+            skill=state.skill, tool=state.tool_name, target=state.target
         )
     except Exception:  # noqa: BLE001 — fail-open by design
         state.pattern_match = None
@@ -380,7 +399,7 @@ def _finalize(state: _CallState) -> None:
         try:
             get_pattern_engine().report_outcome(
                 pattern_id=state.pattern_match.pattern.pattern_id,
-                target=state.env,
+                target=state.target,
                 success=(state.status == "ok"),
             )
         except Exception:  # noqa: BLE001 — never let bookkeeping fail the call

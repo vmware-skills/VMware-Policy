@@ -168,5 +168,100 @@ def undo_show(undo_id: str) -> None:
     )
 
 
+
+
+@app.command()
+def policy(
+    operation: str = typer.Option(
+        "", "--operation", "-o", help="Tool name to explain, e.g. vm_delete."
+    ),
+    env: str = typer.Option("", "--env", "-e", help="Target environment, e.g. production."),
+    risk: str = typer.Option("medium", "--risk", "-r", help="Risk level the tool declares."),
+) -> None:
+    """Show which policy rules are in force, and what they do to an operation.
+
+    The failure this exists to prevent: rules that look configured but never
+    load. Run it with no arguments to see where your rules came from, or with
+    --operation to see the approval tier a specific call would get.
+    """
+    from vmware_policy.policy import DEFAULT_RULES_PATH, get_policy_engine
+
+    engine = get_policy_engine()
+    source = engine.active_rules_source()
+
+    explain = {
+        "user": f"your rules file ({engine._path})",
+        "packaged-default": f"the shipped baseline ({DEFAULT_RULES_PATH}) — you have no {engine._path}",
+        "user-invalid": f"NOTHING — {engine._path} exists but failed to parse, so no rules are enforced",
+        "none": "NOTHING — no rules could be loaded",
+    }
+    colour = {"user": "green", "packaged-default": "cyan", "user-invalid": "red", "none": "red"}
+
+    console.print(f"[bold]Rules in force:[/bold] [{colour[source]}]{explain[source]}[/]")
+
+    tiers = engine._rules.get("risk_tiers") or []
+    deny = engine._rules.get("deny") or []
+    window = engine._rules.get("maintenance_window")
+    console.print(
+        f"  {len(tiers)} approval tier rule(s), {len(deny)} deny rule(s), "
+        f"maintenance window: {'set' if window else 'none'}"
+    )
+
+    # Branch on the same three-valued parse the engine uses. A truthiness test
+    # here reported ENFORCED for the string 'false' — which the engine reads as
+    # off — so this command contradicted itself on screen, in the one release
+    # that tells operators to go and set this key.
+    if "require_declared_environment" in engine._rules:
+        from vmware_policy.policy import _parse_requirement
+
+        requirement = _parse_requirement(engine._rules.get("require_declared_environment"))
+        if requirement == "warn":
+            console.print(
+                "  [yellow]Declared-environment requirement: WARN ONLY[/] — writes "
+                "against a target with no 'environment:' still run, but a future "
+                "release will refuse them. Declare them now and that upgrade is a "
+                "no-op."
+            )
+        elif requirement == "enforce":
+            console.print(
+                "  [bold]Declared-environment requirement: ENFORCED[/] — writes "
+                "against a target with no 'environment:' are refused."
+            )
+        else:
+            console.print(
+                "  Declared-environment requirement: [dim]OFF[/] — the key is set "
+                "but disabled, so undeclared targets are not gated. Set it to "
+                "'warn' or true to turn it on."
+            )
+
+    if source == "user-invalid":
+        console.print(
+            "\n[red]Every operation is currently unrestricted.[/] "
+            "Fix the YAML syntax, then re-run this command."
+        )
+        raise typer.Exit(code=1)
+
+    if not operation:
+        console.print("\nPass --operation to see what happens to a specific call.")
+        return
+
+    allowed = engine.check_allowed(operation, env=env, risk_level=risk)
+    decision = engine.required_approval_tier(operation, env=env, risk_level=risk)
+
+    console.print(f"\n[bold]{operation}[/bold] (env={env or 'unset'}, risk={risk})")
+    if not allowed.allowed:
+        console.print(f"  [red]DENIED[/] by rule '{allowed.rule}': {allowed.reason}")
+        return
+
+    console.print(f"  allowed, approval tier [bold]{decision.tier}[/] (rule: {decision.rule})")
+    if decision.requires_approver:
+        console.print(
+            "  [yellow]Requires a named approver[/] — set VMWARE_AUDIT_APPROVED_BY "
+            "(and VMWARE_AUDIT_RATIONALE) or the call is denied."
+        )
+    if decision.reason:
+        console.print(f"  {decision.reason.strip()}")
+
+
 if __name__ == "__main__":
     app()

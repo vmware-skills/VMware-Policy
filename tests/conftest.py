@@ -40,3 +40,24 @@ def _reset_budget(tmp_path):
             os.environ[k] = v
         else:
             os.environ.pop(k, None)
+
+
+@pytest.fixture(autouse=True)
+def _declared_environment():
+    """Treat every target as a declared lab environment by default.
+
+    The shipped policy baseline refuses writes against a target that declares no
+    environment. That is the product behaviour we want, but it is not what these
+    unit tests are exercising — they test decorator, audit, and undo mechanics.
+    Declaring `lab` puts them in the position of a correctly configured install,
+    so the baseline stays active (and its other rules keep being exercised)
+    without every write test asserting the same denial.
+
+    Tests that are specifically about the declaration rule clear this themselves
+    (see test_declared_environment.py).
+    """
+    from vmware_policy.environment import set_environment_resolver
+
+    set_environment_resolver(lambda _target: "lab")
+    yield
+    set_environment_resolver(None)

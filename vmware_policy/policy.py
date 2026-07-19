@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,10 @@ RISK_LEVELS = ("low", "medium", "high", "critical")
 #   review  — requires a named approver + intended for explicit human review
 APPROVAL_TIERS = ("none", "confirm", "dual", "review")
 
+#: The policy baseline shipped with the package, used when the operator has
+#: written no ``~/.vmware/rules.yaml`` of their own.
+DEFAULT_RULES_PATH = Path(__file__).parent / "rules_default.yaml"
+
 # Param keys whose string values are treated as resource tags / placement for
 # tier matching (e.g. a VM's folder or environment tag: prod/staging/dev).
 _TAG_PARAM_KEYS = ("tag", "tags", "folder", "resource_tag", "env_tier", "environment")
@@ -76,6 +81,107 @@ def risk_requires_confirmation(risk_level: str, env: str = "") -> bool:
     return False
 
 
+
+#: Values of ``require_declared_environment`` that warn instead of refusing.
+#: The migration release ships ``warn``; the enforcing release ships ``true``.
+_WARN_ONLY_VALUES = frozenset({"warn", "warning", "warn_only", "warn-only"})
+_ENFORCE_VALUES = frozenset({"1", "true", "yes", "on"})
+_OFF_VALUES = frozenset({"0", "false", "no", "off", ""})
+
+#: Undeclared-write warnings already emitted, so a busy estate logs one line per
+#: operation rather than one per call.
+_warned_operations: set[str] = set()
+
+
+def _parse_requirement(setting: Any) -> str:
+    """Normalise ``require_declared_environment`` to 'off' / 'warn' / 'enforce'.
+
+    Strict, like :func:`vmware_policy.readonly._parse`: the recognised strings
+    mean what they say regardless of YAML quoting (``"false"`` used to be a
+    truthy string that landed in the ENFORCE branch — the switch did the
+    opposite of its label). Anything unrecognised fails closed to enforce, with
+    a warning naming the valid values, so a typo cannot silently weaken policy.
+    """
+    if setting is None or setting is False:
+        return "off"
+    if setting is True:
+        return "enforce"
+    normalised = str(setting).strip().lower()
+    if normalised in _OFF_VALUES:
+        return "off"
+    if normalised in _WARN_ONLY_VALUES:
+        return "warn"
+    if normalised in _ENFORCE_VALUES:
+        return "enforce"
+    _log.warning(
+        "require_declared_environment has unrecognised value %r — enforcing "
+        "(fail-closed). Use one of: true, false, warn.",
+        setting,
+    )
+    return "enforce"
+
+
+def _risk_index(risk_level: str) -> int:
+    """RISK_LEVELS.index that cannot raise: unknown reads as critical.
+
+    ``vmware-audit policy --risk hgih`` used to traceback with ValueError out
+    of check_allowed. An unrecognised level is treated as the most restrictive
+    one — a typo must not weaken a gate, and must not crash it either.
+    """
+    try:
+        return RISK_LEVELS.index(risk_level)
+    except ValueError:
+        return len(RISK_LEVELS) - 1
+
+
+def _min_risk_index(min_risk: Any) -> int:
+    """Index for a rule's ``min_risk_level`` that cannot raise.
+
+    The counterpart to :func:`_risk_index`, for the other direction. That one
+    guards the level declared in code by ``@vmware_tool``; this one guards the
+    level an operator hand-writes in rules.yaml, which is never validated and
+    is the far likelier place for a typo — ``mediun``, or simply ``MEDIUM``.
+
+    Unknown reads as index 0, so the rule matches every risk level instead of
+    almost none. The direction matters: this threshold gates whether a rule
+    *applies*, so a typo must widen the rule (deny more, require a higher
+    approval tier), never quietly narrow it to the point of never firing.
+    ``required_approval_tier`` keeps the highest matching tier, so a wider
+    match can only raise the bar, never lower it.
+    """
+    if isinstance(min_risk, str):
+        normalised = min_risk.strip().lower()
+        if normalised in RISK_LEVELS:
+            return RISK_LEVELS.index(normalised)
+    _log.warning(
+        "Unrecognised min_risk_level %r in a policy rule — treating it as %r so "
+        "the rule still applies. Expected one of: %s.",
+        min_risk, RISK_LEVELS[0], ", ".join(RISK_LEVELS),
+    )
+    return 0
+
+
+def _is_warn_only(setting: Any) -> bool:
+    """True when the setting asks for a warning rather than a refusal.
+
+    Kept for the CLI's mode display; delegates to the strict parser so the two
+    can never disagree.
+    """
+    return _parse_requirement(setting) == "warn"
+
+
+def _warn_undeclared_once(operation: str) -> None:
+    if operation in _warned_operations:
+        return
+    _warned_operations.add(operation)
+    _log.warning(
+        "%s ran against a target that declares no environment. A future release "
+        "will REFUSE this. Add 'environment: <name>' to that target in the "
+        "skill's config.yaml. Run 'vmware-audit policy' for details.",
+        operation,
+    )
+
+
 # ── Rule loading with hot-reload ──────────────────────────────────────
 
 
@@ -89,32 +195,71 @@ class PolicyEngine:
         self._path = Path(rules_path).expanduser() if rules_path else ops_path("rules.yaml")
         self._rules: dict[str, Any] = {}
         self._mtime: float = 0.0
+        self._source: str = "none"
         self._load_rules()
 
     def _load_rules(self) -> None:
-        """Load rules from YAML file.  Missing file → empty rules (allow all)."""
-        if not self._path.exists():
-            self._rules = {}
-            self._mtime = 0.0
-            return
-        try:
-            import yaml
+        """Load the user's rules; fall back to the packaged baseline if absent.
 
+        The baseline is a *fallback*, never a merge — an operator who writes
+        ``rules.yaml`` owns policy completely, and an empty ``risk_tiers: []``
+        in their file means exactly that.
+
+        A user file that exists but cannot be parsed does NOT fall back. Applying
+        shipped rules the operator never wrote, while their real ones are broken,
+        is the wrong surprise for a policy engine; the failure stays loud and the
+        engine stays permissive so a YAML typo cannot lock anyone out.
+        """
+        import yaml
+
+        if not self._path.exists():
+            try:
+                with open(DEFAULT_RULES_PATH) as fh:
+                    self._rules = yaml.safe_load(fh) or {}
+                self._source = "packaged-default"
+                self._mtime = 0.0
+                _log.debug("No %s — using packaged policy baseline", self._path)
+            except Exception:
+                _log.warning("Packaged policy baseline unreadable", exc_info=True)
+                self._rules = {}
+                self._source = "none"
+                self._mtime = 0.0
+            return
+
+        try:
             self._mtime = self._path.stat().st_mtime
             with open(self._path) as fh:
                 self._rules = yaml.safe_load(fh) or {}
+            self._source = "user"
             _log.debug("Loaded %d policy rules from %s", len(self._rules), self._path)
         except Exception:
             _log.warning("Failed to load policy rules from %s", self._path, exc_info=True)
             self._rules = {}
+            self._source = "user-invalid"
+
+    def active_rules_source(self) -> str:
+        """Where the rules in force came from.
+
+        One of ``user`` (the operator's rules.yaml), ``packaged-default`` (the
+        shipped baseline, because no user file exists), ``user-invalid`` (their
+        file exists but would not parse — rules are empty, nothing is enforced),
+        or ``none``. Surfaced so an operator can tell "my policy is active" from
+        "my policy silently failed to load" without reading logs.
+        """
+        self._maybe_reload()
+        return self._source
 
     def _maybe_reload(self) -> None:
         """Hot-reload if file changed."""
         if not self._path.exists():
-            if self._rules:
-                _log.warning("Policy rules file deleted: %s — clearing rules (allow all)", self._path)
-                self._rules = {}
-                self._mtime = 0.0
+            if self._source == "user":
+                _log.warning(
+                    "Policy rules file deleted: %s — falling back to the packaged baseline",
+                    self._path,
+                )
+                self._load_rules()
+            elif self._source not in ("packaged-default", "none"):
+                self._load_rules()
             return
         try:
             current_mtime = self._path.stat().st_mtime
@@ -208,6 +353,63 @@ class PolicyEngine:
             if result and not result.allowed:
                 return result
 
+        # ── Require the target to declare an environment ───────────────
+        # Environment-scoped rules can only protect targets whose environment is
+        # known. Treating an undeclared target as safe made every such rule
+        # inert on estates that never labelled anything, so an undeclared target
+        # is treated as unknown and refused for anything above read-level risk.
+        # Reads are never gated: inspection must keep working untouched.
+        #
+        # Evaluated LAST, after deny rules and the maintenance window: this
+        # check can only ever refuse-or-pass, never grant. Its warn-only
+        # migration form returns allowed=True, and an early return of that
+        # result was found (2026-07-18 review) to bypass an operator's own
+        # unscoped deny rules on exactly the unlabelled targets it protects.
+        requirement = _parse_requirement(
+            self._rules.get("require_declared_environment")
+        )
+        if (
+            requirement != "off"
+            and not env
+            and _risk_index(risk_level) >= RISK_LEVELS.index("medium")
+        ):
+            # Written to be relayed to a human by an agent mid-conversation:
+            # lead with the one-line fix and a copy-paste snippet, not the
+            # policy internals. Reads always work, so say so.
+            fix = (
+                "The one-line fix: in the skill's config.yaml, under this "
+                "target, add\n"
+                "\n"
+                "    environment: lab    # or: staging / production\n"
+                "\n"
+                "then retry — no restart needed. Read-only operations are not "
+                "affected and keep working. ('vmware-audit policy' shows the "
+                "rules in force.)"
+            )
+            if requirement == "warn":
+                # Migration window: warn loudly, allow anyway. Flipping this
+                # setting to true is the whole of the enforcing release.
+                _warn_undeclared_once(operation)
+                return PolicyResult(
+                    allowed=True,
+                    rule="undeclared_environment_warning",
+                    reason=(
+                        f"'{operation}' worked, but heads-up: its target hasn't "
+                        f"declared which environment it is, and a future release "
+                        f"will refuse state-changing operations against "
+                        f"undeclared targets. {fix}"
+                    ),
+                )
+            return PolicyResult(
+                allowed=False,
+                rule="undeclared_environment",
+                reason=(
+                    f"'{operation}' would change infrastructure state, but this "
+                    f"target hasn't declared which environment it is, so the "
+                    f"right safety rules can't be applied. {fix}"
+                ),
+            )
+
         return PolicyResult(allowed=True, rule="default_allow")
 
     def required_approval_tier(
@@ -261,15 +463,15 @@ class PolicyEngine:
             if not ops or not any(self._pattern_match(op, operation) for op in ops):
                 return False
         envs = rule.get("environments", [])
-        if envs and env and env not in envs:
-            return False
         if envs and not env:
             return False  # rule scoped to envs but call has none → no match
+        if envs and not any(self._pattern_match(e, env) for e in envs):
+            return False
         rule_tags = {str(t) for t in (rule.get("tags") or [])}
         if rule_tags and not (rule_tags & tags):
             return False
         min_risk = rule.get("min_risk_level")
-        if min_risk and RISK_LEVELS.index(risk_level) < RISK_LEVELS.index(min_risk):
+        if min_risk and _risk_index(risk_level) < _min_risk_index(min_risk):
             return False
         return True
 
@@ -290,27 +492,42 @@ class PolicyEngine:
             if not ops or not any(self._pattern_match(op, operation) for op in ops):
                 return False
 
-        # Match by environment
+        # Match by environment — same semantics as _tier_rule_matches (the two
+        # diverged in the 2026-07-18 release: this path kept exact matching and
+        # let an EMPTY env pass the filter. With env now the *declared*
+        # environment — "" for every unlabelled target — that made a
+        # production-scoped deny fire on every lab target, and a glob written
+        # to the documented 'prod*' idiom never fire at all).
         envs = rule.get("environments", [])
-        if envs and env and env not in envs:
+        if envs and not env:
+            return False  # rule scoped to envs but target declares none → no match
+        if envs and not any(self._pattern_match(e, env) for e in envs):
             return False
 
         # Match by risk level (minimum)
         min_risk = rule.get("min_risk_level")
         if min_risk:
-            if RISK_LEVELS.index(risk_level) < RISK_LEVELS.index(min_risk):
+            if _risk_index(risk_level) < _min_risk_index(min_risk):
                 return False
 
         return True
 
     @staticmethod
     def _pattern_match(pattern: str, value: str) -> bool:
-        """Simple glob: 'delete_*' matches 'delete_segment'."""
+        """Glob match: 'delete_*', '*_delete' and 'vm_*_snapshot' all work.
+
+        Previously only a trailing ``*`` was honoured — every other pattern fell
+        through to an equality test, so a rule written ``operations:
+        ["*_delete"]`` silently matched nothing. A deny rule that looks
+        configured but never fires is worse than no rule, so this now delegates
+        to :func:`fnmatch.fnmatchcase` and handles the full glob syntax.
+
+        Case-sensitive: tool names are snake_case identifiers, and a policy that
+        quietly matched ``VM_Delete`` would be surprising in the other direction.
+        """
         if pattern == "*":
             return True
-        if pattern.endswith("*"):
-            return value.startswith(pattern[:-1])
-        return pattern == value
+        return fnmatchcase(value, pattern)
 
     @staticmethod
     def _in_maintenance_window(window: dict[str, str]) -> bool:
