@@ -1,3 +1,47 @@
+## v1.8.1 (2026-07-19) — read-only mode reaches the surfaces that teach it
+
+v1.8.0 put read-only mode in the code and documented it in the README only.
+Every other layer was empty, and each serves a different reader: SKILL.md is what
+the agent loads, setup-guide is what an operator reads while configuring, `doctor`
+is where they verify it took. The gap had two concrete costs.
+
+An agent read SKILL.md, called a write tool the gate had withheld, and got nothing
+back — with no way to learn that the absence was a deliberate lockdown rather than
+a fault. It reads as a broken tool, so the model retries or hunts for a workaround.
+
+An operator who set the switch had no way to confirm it. The only signal was a line
+in the MCP server's start-up log.
+
+### Added — `read_only_status()`
+
+Resolves read-only mode *and* reports where the answer came from
+(`ReadOnlyStatus(enabled, source, raw, recognised)`), so each skill's `doctor` can
+show the state without re-implementing the precedence chain. Ten copies of "build
+the env var name, walk the chain" is ten chances to drift from the gate that
+enforces it. A test pins that its verdict matches `read_only_enabled` case by case.
+
+### Added — the gate is documented in this package's own SKILL.md
+
+vmware-policy implements `apply_read_only_gate()` and said nothing about it in the
+layer skill authors and agents actually read. SKILL.md, setup-guide and
+capabilities now cover the API, the six-level classification ladder, all three
+`FORCE_WRITE` entries with their rationale, and the exact fail-closed semantics —
+two conditions abort startup, the unparseable-value case does not.
+
+### Changed — `family_smoke.sh` 85 → 87 checks
+
+Two additions, both closing gaps this release exposed:
+
+- **Feature-surface coverage.** A family-wide feature must appear on every surface
+  that teaches it. Read-only mode is the first entry; add the next feature to the
+  manifest when it lands. This check would have caught the v1.8.0 gap the day it
+  shipped. It looks at the SKILL.md *body*, because a mention inside the metadata
+  JSON is a declaration for scanners, not instruction an agent reads — counting it
+  as coverage is precisely what hid the gap.
+- **Progressive Disclosure limits.** SKILL.md bodies ≤3000 words, descriptions
+  ≤1024 chars. Neither was enforced anywhere, and both were breached during v1.8.0
+  — found by a reviewer reading files rather than by CI.
+
 ## v1.8.0 (2026-07-18) — read-only mode, policy baseline that actually loads, list envelope
 
 Driven by [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31), where an

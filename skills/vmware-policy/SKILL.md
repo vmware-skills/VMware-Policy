@@ -146,6 +146,37 @@ def delete_segment(name: str, env: str = "") -> dict:
 clean_text = sanitize(api_response_text, max_len=500)
 ```
 
+## Read-Only Gate
+
+This package *implements* the family's read-only mode; the skills only call it. A prompt instruction ("never modify anything") is advisory and a weak model can ignore it, so `apply_read_only_gate()` makes the guarantee structural: with the mode on, every write tool is removed from the FastMCP registry before the server serves, and `list_tools()` never offers it. The model cannot call what it cannot see.
+
+```python
+from vmware_policy import apply_read_only_gate
+
+# Call once, after every tool module has registered and before the server runs.
+WITHHELD_WRITE_TOOLS: list[str] = apply_read_only_gate(
+    mcp, "vmware-aria", config_flag=_config_read_only()
+)
+```
+
+It returns the sorted names of the tools it removed (empty when the mode is off) so the caller can log what was withheld, and it is idempotent. `skill` is the hyphenated skill name, normalised to a per-skill env var (`vmware-nsx-security` -> `VMWARE_NSX_SECURITY_READ_ONLY`). `config_flag` carries the skill's own `read_only:` setting and is consulted only when neither env var is set -- pass `None` for skills with no config file (vmware-pilot, vmware-debug, vmware-harden). Resolution order: per-skill env -> family `VMWARE_READ_ONLY` -> `config_flag` -> off, default off.
+
+Two helpers answer the same question without touching a registry: `read_only_enabled(skill, config_flag) -> bool`, and `read_only_status(skill, config_flag) -> ReadOnlyStatus(enabled, source, raw, recognised)`, which adds *where* the answer came from so a skill's `doctor` can report it. Doctors should call `read_only_status` rather than walking the chain themselves -- one implementation means a doctor cannot disagree with the gate that enforces it.
+
+**Classification.** A tool is withheld unless it is provably read-only. Signals, highest priority first: `FORCE_WRITE` membership, `[WRITE]` docstring prefix, `readOnlyHint=False` annotation, `[READ]` docstring prefix, `readOnlyHint=True` annotation, and anything inconclusive counts as a write. The docstring marker outranks the MCP annotation because it has full family coverage, while vmware-harden and vmware-debug register tools through a `build_server()` factory that passes no annotations at all.
+
+**`FORCE_WRITE`** overrides three tools whose `[READ]` marker under-reports their real effect:
+
+| Tool | Skill | Why |
+|------|-------|-----|
+| `vm_guest_download` | vmware-aiops | Reads from the guest OS, but writes to an operator-supplied `local_path` and takes guest credentials |
+| `get_supervisor_kubeconfig` | vmware-vks | Materialises a session-token credential file at a model-supplied local path |
+| `get_tkc_kubeconfig` | vmware-vks | Same shape as above |
+
+All three are read-only against the managed infrastructure but write a file to a caller-supplied local path with credentials involved -- side effects a locked-down deployment should opt into explicitly rather than receive by default. Tools that write only to a skill's own local store (vmware-harden's DuckDB twin) stay exposed: that store is a cache of observations, not managed infrastructure.
+
+**Fail-closed, precisely.** Exactly two conditions abort start-up with `ReadOnlyGateError`: the FastMCP tool registry cannot be enumerated (typically an incompatible `mcp` version), or a removal did not take effect and a write tool survived the sweep. A switch value that cannot be parsed (`VMWARE_READ_ONLY=ture`) does **not** abort -- it resolves to *on*, with a warning naming the accepted values, because a typo must never leave write tools exposed. A read-only mode that silently degrades to read-write is worse than none, since operators stop checking.
+
 ## MCP Tools (0)
 
 vmware-policy does not expose MCP tools. It is a Python library and CLI consumed by other VMware skills.
@@ -154,6 +185,8 @@ vmware-policy does not expose MCP tools. It is a Python library and CLI consumed
 |-----------|------|-------------|
 | `@vmware_tool` | Decorator | Wraps all 156+ MCP tools across 8 skills |
 | `sanitize()` | Function | Prompt injection defense for API responses |
+| `apply_read_only_gate()` | Function | Removes write tools from a skill's MCP registry when read-only mode is on (see above) |
+| `read_only_status()` | Function | Resolves read-only state + its source, for a skill's `doctor` to report |
 | `AuditEngine` | Class | SQLite WAL audit logger with rotation |
 | `PolicyEngine` | Class | YAML rule evaluation with hot-reload |
 | `vmware-audit` | CLI | Typer CLI for querying audit trail |

@@ -139,3 +139,64 @@ def test_policy_command_still_reports_warn_and_enforce(tmp_path):
         reset_policy_engine()  # rebind the singleton to this iteration's rules file
         result = runner.invoke(app, ["policy"], env={"OPS_HOME": str(home)})
         assert expected in result.stdout, f"{value} should report {expected}"
+
+
+# ---------------------------------------------------------------------------
+# 3. `doctor` needs to report the same answer the gate enforces
+# ---------------------------------------------------------------------------
+
+READ_ONLY_CASES = [
+    ({}, None),
+    ({"VMWARE_READ_ONLY": "true"}, None),
+    ({"VMWARE_READ_ONLY": "false"}, None),
+    ({"VMWARE_READ_ONLY": "1"}, None),
+    ({"VMWARE_READ_ONLY": "off"}, None),
+    ({"VMWARE_AIOPS_READ_ONLY": "true"}, None),
+    ({"VMWARE_READ_ONLY": "1", "VMWARE_AIOPS_READ_ONLY": "false"}, None),
+    ({"VMWARE_READ_ONLY": "ture"}, None),
+    ({"VMWARE_READ_ONLY": ""}, True),
+    ({}, True),
+    ({}, False),
+]
+
+
+@pytest.mark.parametrize("env,config_flag", READ_ONLY_CASES)
+def test_status_never_disagrees_with_the_gate(monkeypatch, env, config_flag):
+    """A doctor that contradicts the gate is worse than no doctor. `read_only_status`
+    exists so ten skills stop hand-rolling the precedence chain; pin that its verdict
+    is byte-for-byte the one `read_only_enabled` enforces."""
+    from vmware_policy.readonly import read_only_enabled, read_only_status
+
+    for key in ("VMWARE_READ_ONLY", "VMWARE_AIOPS_READ_ONLY"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    status = read_only_status("vmware-aiops", config_flag)
+    assert status.enabled == read_only_enabled("vmware-aiops", config_flag)
+
+
+def test_status_names_the_source_an_operator_must_edit(monkeypatch):
+    """"It is on" is not actionable — the operator needs to know which of the
+    three switches won, because that is the one they have to clear."""
+    from vmware_policy.readonly import read_only_status
+
+    monkeypatch.setenv("VMWARE_READ_ONLY", "false")
+    monkeypatch.setenv("VMWARE_AIOPS_READ_ONLY", "true")
+    status = read_only_status("vmware-aiops")
+    assert status.enabled is True
+    assert status.source == "VMWARE_AIOPS_READ_ONLY"
+    assert status.raw == "true"
+
+
+def test_status_flags_a_typo_rather_than_reporting_a_clean_on(monkeypatch):
+    """The one path where a deployment locks itself down by accident. `recognised`
+    lets doctor say "this is a typo" instead of a confident "read-only is on"."""
+    from vmware_policy.readonly import read_only_status
+
+    monkeypatch.delenv("VMWARE_AIOPS_READ_ONLY", raising=False)
+    monkeypatch.setenv("VMWARE_READ_ONLY", "ture")
+    status = read_only_status("vmware-aiops")
+    assert status.enabled is True
+    assert status.recognised is False
+    assert status.raw == "ture"

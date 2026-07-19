@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, NamedTuple
 
 _log = logging.getLogger("vmware_policy.readonly")
 
@@ -137,6 +137,47 @@ def read_only_enabled(skill: str, config_flag: bool | None = None) -> bool:
         if parsed is not None:
             return parsed
     return bool(config_flag)
+
+
+class ReadOnlyStatus(NamedTuple):
+    """Where a skill's read-only setting resolved from, for `doctor` to report.
+
+    ``enabled`` is the same answer :func:`read_only_enabled` gives. The rest
+    exists because "is my lockdown actually on?" had no answer outside the MCP
+    server's start-up log — an operator who set the switch could not confirm it
+    took, which is a poor property for a control whose whole promise is
+    fail-closed.
+    """
+
+    enabled: bool
+    source: str  # env var name, "config", or "default"
+    raw: str  # the value as written, "" when unset
+    recognised: bool  # False when the value was a typo that fell through to on
+
+
+def read_only_status(skill: str, config_flag: bool | None = None) -> ReadOnlyStatus:
+    """Resolve read-only mode *and* report where the answer came from.
+
+    Kept here rather than in each skill's ``doctor.py`` so the precedence chain
+    has one implementation. Ten copies of "build the env var name, walk the
+    chain" is ten chances to drift from the gate that actually enforces it —
+    and a doctor that disagrees with the gate is worse than no doctor.
+    """
+    for key in (_skill_env_key(skill), FAMILY_ENV):
+        raw = os.environ.get(key)
+        if raw is None or not raw.strip():
+            continue
+        normalised = raw.strip().lower()
+        if normalised in _TRUTHY:
+            return ReadOnlyStatus(True, key, raw, True)
+        if normalised in _FALSY:
+            return ReadOnlyStatus(False, key, raw, True)
+        # Unparseable resolves to on, deliberately. Surface the raw value: this
+        # is the one path where a deployment locks itself down over a typo.
+        return ReadOnlyStatus(True, key, raw, False)
+    if config_flag is not None:
+        return ReadOnlyStatus(bool(config_flag), "config", str(config_flag), True)
+    return ReadOnlyStatus(False, "default", "", True)
 
 
 # ---------------------------------------------------------------------------
