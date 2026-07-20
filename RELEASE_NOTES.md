@@ -1,3 +1,60 @@
+## v1.8.4 (2026-07-20) — a failure that is returned is now audited as a failure
+
+### Fixed — `@vmware_tool` recorded returned failures as successes
+
+A skill reports a failure in one of two ways. It raises, which the decorator has
+always recorded correctly. Or it catches the exception and **returns** an error
+payload — what `tool_errors` does for ~41 tools in vmware-aiops, and what every
+hand-written `except` block across the family does. To the wrapper, the second
+kind looked exactly like a successful call.
+
+One missing distinction, three consequences:
+
+| | before | now |
+|---|---|---|
+| audit row | `status=ok` for an operation that failed | `status=error` |
+| undo store | a token recorded for a change that never happened | nothing recorded |
+| circuit breaker | told `success=True` | told `success=False` |
+
+The audit one matters most: in a family whose stated purpose is a trustworthy
+audit trail, the log was not merely incomplete, it was affirmatively wrong. The
+undo one broke an invariant `_record_undo`'s own docstring states — *"a recorded
+undo always corresponds to a change that actually happened"* — so vmware-pilot
+could offer to reverse a write that never landed. And the breaker is the third
+layer of the recovery model CLAUDE.md mandates; a tool that fails by returning
+could never trip it, which is why that layer had effectively never fired.
+
+**Dict-shaped payloads are detected without any change in the skills.**
+`{"error": <truthy>}`, and a one-element list of the same, are the family's own
+documented envelope, so recognising them is reading a convention rather than
+guessing. A falsy `error` key is a result reporting that nothing went wrong; a
+multi-element list is a batch that returned partial results. Both stay `ok`.
+
+### Added — `report_tool_failure()` for payloads that cannot carry a marker
+
+```python
+from vmware_policy import report_tool_failure
+
+except Exception as exc:
+    report_tool_failure(str(exc))
+    return f"Error: {msg}"
+```
+
+Strings are deliberately **not** sniffed. Skills that hand back console text
+(vmware-avi, vmware-log-insight) can legitimately emit output beginning with
+"Error:" as *data*, and marking those calls failed would be the same misreport in
+the opposite direction. Those skills call this instead.
+
+The signal is a context variable rebound per call, so an inner tool's failure
+cannot mark its caller failed — skills delegate in-process (vmware-aiops runs
+vmware-monitor's library), and an outer tool that catches and recovers is still a
+successful call.
+
+### Note for skill authors
+
+Skills adopt `report_tool_failure` from this release onward; the dict detection
+needs no skill change and applies immediately.
+
 ## v1.8.3 (2026-07-20) — credentials resolve as a pair; documented env vars now exist
 
 ### Changed — version alignment
