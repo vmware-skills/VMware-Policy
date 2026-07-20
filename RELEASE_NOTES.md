@@ -1,3 +1,44 @@
+## v1.8.5 (2026-07-20) — a denial from inside a tool body is a denial
+
+### Fixed — an orchestrating call audited as a success it never was
+
+`_pre_check` sets the status before raising, so a policy denial of *this* call
+has always been recorded correctly. A denial arriving from **inside** the body —
+a nested `@vmware_tool` call that policy refused, propagating outward — reached
+the `except (PolicyDenied, BudgetExceeded): raise` branch with the status left at
+its `"ok"` default. The outer call then audited as a success, and an armed
+pattern's circuit breaker was told the same.
+
+This is the shape vmware-pilot produces: a workflow step denied mid-chain, with
+the audit trail showing the orchestrating tool completing normally.
+
+Both wrappers are fixed. The sync and async wrappers are written out separately
+in this file, and a mutation deleting the guard from the async one alone survived
+the first version of the test — so there are now async tests for each.
+
+### Documented — where `_returned_failure`'s boundary is, and why it is not narrower
+
+v1.8.4 taught the decorator to read a returned error payload as a failure. The
+rule keys on a truthy `error` key alone, which is wider than it looks: a result
+that merely *describes* some other object's failure reads as a failed call.
+
+Requiring `hint` alongside `error` would fix that — 122 of the family's 130
+caught-error payloads are exactly `{error, hint}`. It would also stop detecting
+roughly 25 genuine failures that carry no hint (vmware-aiops' plan guards,
+vmware-pilot's terminal-state refusals), which is the original bug in the
+opposite direction. Under-detecting is the worse failure, so the rule stays.
+
+The cost lands where the ambiguity actually is. `{"state": "error", "error": ...}`
+cannot tell a *model* whether the call failed or the thing it polled did either,
+so those payloads now name the field for what it is — `vm_task_status` returns
+`task_error`. The reasoning is recorded in the function's docstring rather than
+left for the next reader to rediscover.
+
+### Note for skill authors
+
+`report_tool_failure()` shipped in 1.8.4 with no callers. Every skill that
+returns a string error payload now calls it; see those release notes.
+
 ## v1.8.4 (2026-07-20) — a failure that is returned is now audited as a failure
 
 ### Fixed — `@vmware_tool` recorded returned failures as successes
