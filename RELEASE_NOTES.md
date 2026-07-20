@@ -1,3 +1,20 @@
+## v1.8.3 (2026-07-20) — credentials resolve as a pair; documented env vars now exist
+
+### Changed — version alignment
+
+No functional change in this skill. The family release adds an env-var override for the per-target username in the credential-bearing skills; this package has no per-target credentials.
+
+### Changed — `family_smoke.sh` 89 → 90 checks
+
+Added the credential-variable comparison above. Also corrected one check's label:
+it claimed "All [READ] list tools return the paginated envelope" while only
+testing for a declared `list[dict]` return type. A tool annotated `-> dict` that
+returns `{"total": N, "rows": [...]}` was invisible to it — including
+vmware-monitor's own `list_virtual_machines`, which has its own auto-compact
+shape. Verifying the real invariant means inspecting the returned value, so the
+check keeps its narrower scope under an accurate name rather than a broad claim
+it never enforced.
+
 ## v1.8.2 (2026-07-20) — the MCP server moves into the package namespace
 
 ### Fixed — co-installing two skills broke all but the last one
