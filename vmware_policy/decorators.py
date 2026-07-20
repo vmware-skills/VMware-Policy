@@ -95,6 +95,22 @@ def _returned_failure(result: Any) -> bool:
     same are exactly what the family's error wrappers produce. A falsy ``error``
     key is a result reporting that nothing went wrong, and a multi-element list
     is a batch that returned partial results — a successful call either way.
+
+    **Where the boundary is, and why it is not narrower.** A survey of every
+    error-keyed dict in the family found 122 of 130 caught-error payloads are
+    exactly ``{error, hint}`` — so requiring ``hint`` looks tempting. It would
+    also stop detecting ~25 genuine failures that carry no hint: the plan guards
+    in vmware-aiops (``{"error": "Plan 'x' not found"}``) and vmware-pilot's
+    terminal-state refusals (``{"error": ..., "state": ..., "workflow_id": ...}``).
+    Under-detecting reintroduces the bug this function exists to fix, in the
+    other direction, so the rule stays keyed on ``error`` alone.
+
+    The cost is that a *successful* call whose result happens to describe some
+    other object's failure reads as a failed call. That ambiguity belongs to the
+    payload, not to this rule: ``{"state": "error", "error": ...}`` cannot tell a
+    model whether the call failed or the thing it polled did, either. Such
+    payloads name the field for what it is (``task_error``) rather than being
+    special-cased here.
     """
     if isinstance(result, dict):
         return bool(result.get("error"))
@@ -158,7 +174,16 @@ def vmware_tool(
                 try:
                     _pre_check(state)
                     return _annotate_result(state, await func(*args, **kwargs))
-                except (PolicyDenied, BudgetExceeded):
+                except (PolicyDenied, BudgetExceeded) as exc:
+                    # `_pre_check` sets the status before raising, so a denial of
+                    # *this* call is already recorded. One arriving from inside
+                    # the body — a nested @vmware_tool call policy refused,
+                    # propagating outward — left the default "ok", so the
+                    # orchestrating call audited as a success it never was.
+                    if state.status == "ok":
+                        state.status = (
+                            "denied" if isinstance(exc, PolicyDenied) else "budget_exceeded"
+                        )
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)
@@ -180,7 +205,16 @@ def vmware_tool(
                 try:
                     _pre_check(state)
                     return _annotate_result(state, func(*args, **kwargs))
-                except (PolicyDenied, BudgetExceeded):
+                except (PolicyDenied, BudgetExceeded) as exc:
+                    # `_pre_check` sets the status before raising, so a denial of
+                    # *this* call is already recorded. One arriving from inside
+                    # the body — a nested @vmware_tool call policy refused,
+                    # propagating outward — left the default "ok", so the
+                    # orchestrating call audited as a success it never was.
+                    if state.status == "ok":
+                        state.status = (
+                            "denied" if isinstance(exc, PolicyDenied) else "budget_exceeded"
+                        )
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)

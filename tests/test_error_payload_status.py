@@ -32,10 +32,11 @@ signal instead.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
-from vmware_policy import report_tool_failure, vmware_tool
+from vmware_policy import BudgetExceeded, PolicyDenied, report_tool_failure, vmware_tool
 
 
 @pytest.fixture
@@ -243,6 +244,97 @@ def test_async_inner_failure_does_not_fail_the_outer_call(audited):
 
     asyncio.run(outer())
     assert [r["status"] for r in audited] == ["error", "ok"]
+
+
+# ── a denial raised by the body, not by the pre-check ───────────────────────
+#
+# `_pre_check` sets status="denied" before raising, so a denial of *this* call
+# is recorded correctly. A denial that arrives from inside the body — a nested
+# @vmware_tool call that policy refused, propagating outward — was re-raised by
+# the `except (PolicyDenied, BudgetExceeded): raise` branch with the status left
+# at its "ok" default. The outer call then audited as a success it never was,
+# and an armed pattern's breaker was told the same.
+
+
+def test_denial_raised_inside_the_body_is_not_audited_as_ok(audited):
+    @vmware_tool(risk_level="low")
+    def outer() -> dict:
+        raise PolicyDenied(SimpleNamespace(reason="nested tool denied", rule="r1"))
+
+    with pytest.raises(PolicyDenied):
+        outer()
+    assert _status(audited) == "denied"
+
+
+def test_budget_exceeded_from_the_body_is_not_audited_as_ok(audited):
+    @vmware_tool(risk_level="low")
+    def outer() -> dict:
+        raise BudgetExceeded("token budget exhausted")
+
+    with pytest.raises(BudgetExceeded):
+        outer()
+    assert _status(audited) == "budget_exceeded"
+
+
+def test_a_precheck_denial_records_denied_and_never_runs_the_body(audited, monkeypatch):
+    """A denial from the pre-check keeps recording correctly.
+
+    The `status == "ok"` guard in the wrapper is belt-and-braces: `_pre_check`
+    already sets exactly the status the guard would, so the two agree today and
+    no mutation can tell them apart. This test therefore pins the pre-check path
+    itself — that a denied call audits `denied` and the body never runs — rather
+    than pretending to test the guard. An earlier version of this test asserted
+    neither and passed on a plain successful call; a test whose name promises
+    more than it checks is worse than no test.
+    """
+    ran = []
+
+    class _DenyingEngine:
+        def check_allowed(self, *a, **kw):
+            return SimpleNamespace(
+                allowed=False, reason="denied by rule prod-freeze", rule="prod-freeze"
+            )
+
+    monkeypatch.setattr(
+        "vmware_policy.decorators.get_policy_engine", lambda: _DenyingEngine()
+    )
+
+    @vmware_tool(risk_level="high")
+    def blocked() -> dict:
+        ran.append(1)
+        return {"items": []}
+
+    with pytest.raises(PolicyDenied):
+        blocked()
+    assert ran == [], "a denied call must not execute its body"
+    assert _status(audited) == "denied"
+
+
+def test_async_denial_raised_inside_the_body_is_not_audited_as_ok(audited):
+    """The async wrapper is written out separately and drifts if untested.
+
+    A mutation deleting this guard from the async wrapper alone survived the
+    first version of this file — the same sync/async blind spot the wrapper's
+    own comment records having been bitten by once already.
+    """
+
+    @vmware_tool(risk_level="low")
+    async def outer() -> dict:
+        raise PolicyDenied(SimpleNamespace(reason="nested tool denied", rule="r1"))
+
+    with pytest.raises(PolicyDenied):
+        asyncio.run(outer())
+    assert _status(audited) == "denied"
+
+
+def test_async_budget_exceeded_from_the_body_is_not_audited_as_ok(audited):
+    @vmware_tool(risk_level="low")
+    async def outer() -> dict:
+        raise BudgetExceeded("token budget exhausted")
+
+    with pytest.raises(BudgetExceeded):
+        asyncio.run(outer())
+    assert _status(audited) == "budget_exceeded"
 
 
 # ── the two downstream consequences ──────────────────────────────────────────
