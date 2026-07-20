@@ -23,6 +23,7 @@ Registration enforcement::
 
 from __future__ import annotations
 
+import contextvars
 import inspect
 import logging
 import os
@@ -48,6 +49,58 @@ class PolicyDenied(Exception):
     def __init__(self, result: PolicyResult) -> None:
         self.result = result
         super().__init__(result.reason)
+
+
+# ── Returned failures ─────────────────────────────────────────────────────
+
+#: Set by ``report_tool_failure`` for the innermost in-flight tool call. The
+#: wrapper rebinds it per call and restores the previous binding afterwards, so
+#: an inner tool's failure cannot mark its caller failed — skills delegate
+#: in-process (vmware-aiops runs vmware-monitor's library) and an outer tool
+#: that catches and recovers is still a successful call.
+_failure_signal: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "vmware_policy_tool_failure", default=None
+)
+
+
+def report_tool_failure(message: str) -> None:
+    """Declare that the in-flight tool call failed, though it will *return*.
+
+    Most tools signal failure by raising, which the wrapper already records. A
+    tool that instead returns an error payload looks identical to a successful
+    one, so it must say so explicitly::
+
+        try:
+            ...
+        except Exception as exc:
+            report_tool_failure(str(exc))
+            return f"Error: {msg}"
+
+    Dict-shaped payloads carrying a truthy ``error`` key are detected without
+    this call — that is the family's own documented envelope, so reading it is
+    following a convention rather than guessing. String returns are *not*
+    sniffed: skills that hand back console text can legitimately emit output
+    beginning with "Error:" as data, and marking those calls failed would be the
+    same lie in the opposite direction. Such skills call this instead.
+
+    No-op outside a tool call.
+    """
+    _failure_signal.set(message)
+
+
+def _returned_failure(result: Any) -> bool:
+    """True if ``result`` is the family's documented error envelope.
+
+    Narrow on purpose. ``{"error": <truthy>}`` and a one-element list of the
+    same are exactly what the family's error wrappers produce. A falsy ``error``
+    key is a result reporting that nothing went wrong, and a multi-element list
+    is a batch that returned partial results — a successful call either way.
+    """
+    if isinstance(result, dict):
+        return bool(result.get("error"))
+    if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
+        return bool(result[0].get("error"))
+    return False
 
 
 def vmware_tool(
@@ -98,6 +151,10 @@ def vmware_tool(
                     func, args, kwargs, signature, _sensitive, risk_level,
                     timeout_seconds, undo,
                 )
+                # Fresh binding per call, restored below: a nested tool's
+                # `report_tool_failure` must not mark its caller failed, and a
+                # signal must not survive into the next call on this task.
+                token = _failure_signal.set(None)
                 try:
                     _pre_check(state)
                     return _annotate_result(state, await func(*args, **kwargs))
@@ -108,6 +165,7 @@ def vmware_tool(
                     raise
                 finally:
                     _finalize(state)
+                    _failure_signal.reset(token)
         else:
             @wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -115,6 +173,10 @@ def vmware_tool(
                     func, args, kwargs, signature, _sensitive, risk_level,
                     timeout_seconds, undo,
                 )
+                # Fresh binding per call, restored below: a nested tool's
+                # `report_tool_failure` must not mark its caller failed, and a
+                # signal must not survive into the next call on this task.
+                token = _failure_signal.set(None)
                 try:
                     _pre_check(state)
                     return _annotate_result(state, func(*args, **kwargs))
@@ -125,6 +187,7 @@ def vmware_tool(
                     raise
                 finally:
                     _finalize(state)
+                    _failure_signal.reset(token)
 
         # ── Attach metadata for harness / introspection ───────────
         wrapper._is_vmware_tool = True
@@ -312,11 +375,18 @@ def _pre_check(state: _CallState) -> None:
 def _annotate_result(state: _CallState, result: Any) -> Any:
     """Record the result, surface pattern context, and record an undo token.
 
-    Runs only on the success path (the wrapper calls it with the function's
-    return value), so a recorded undo always corresponds to a change that
-    actually happened.
+    Runs on every path that returns a value — which is not the same as the
+    success path. A tool can fail and still return: the family's error wrappers
+    catch the exception and hand back an error payload, so the function returns
+    normally and nothing here would otherwise notice. That gap made the audit
+    row say ``ok`` for a failed operation, recorded an undo token for a change
+    that never happened, and fed ``success=True`` to the circuit breaker, which
+    is why layer three of CLAUDE.md's recovery model never tripped for most of
+    the family. Detecting the returned failure first restores all three.
     """
     state.result = result
+    if _returned_failure(result) or _failure_signal.get() is not None:
+        state.status = "error"
     if (
         state.pattern_match
         and state.pattern_match.armed
@@ -333,8 +403,12 @@ def _record_undo(state: _CallState, result: Any) -> None:
 
     Best-effort: a broken undo callable or store must never fail the call.
     Attaches ``_undo_id`` to dict results so the agent / pilot can reference it.
+
+    Skipped once the call is known to have failed: an undo token asserts that a
+    change happened and can be reversed, and offering to reverse a write that
+    never landed is worse than offering nothing.
     """
-    if state.undo is None:
+    if state.undo is None or state.status != "ok":
         return
     try:
         descriptor = state.undo(state.safe_params, result)

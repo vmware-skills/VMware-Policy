@@ -4,7 +4,7 @@ __version__ = "1.8.3"
 
 from vmware_policy.audit import AuditEngine, get_engine
 from vmware_policy.budget import BudgetExceeded, BudgetTracker, get_budget
-from vmware_policy.decorators import PolicyDenied, vmware_tool
+from vmware_policy.decorators import PolicyDenied, report_tool_failure, vmware_tool
 from vmware_policy.envelope import ENVELOPE_KEYS, paginated
 from vmware_policy.environment import (
     mtime_cached_loader,
@@ -24,6 +24,7 @@ from vmware_policy.undo import UndoStore, get_undo_store
 
 __all__ = [
     "vmware_tool",
+    "report_tool_failure",
     "sanitize",
     "apply_read_only_gate",
     "paginated",
