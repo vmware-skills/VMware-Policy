@@ -1,3 +1,16 @@
+## v1.8.8 — add the `guarded` CLI decorator (the CLI counterpart to `@vmware_tool`)
+
+`vmware_policy.guarded` wraps a CLI command so it routes through the same
+`guard()` + `audit_call()` core the MCP surface uses (HLD §4.1; invariants
+I-1/I-3/I-8): one authorization gate, one audit row to `~/.vmware/audit.db`, on
+every surface. It is leaner than `@vmware_tool` (no budget/pattern/undo machinery)
+and classifies a declined confirmation as `rejected` rather than an error. Both
+surfaces bind `(tool, params, target)` through the same reflection helpers, so a
+deny rule scopes the CLI and MCP identically.
+
+The skills adopt it in their own 1.8.8 releases; this release makes the core
+available.
+
 ## v1.8.7 (2026-07-21) — the skill-level read-only switch is removed; read/write authorization is the vCenter account's job (RBAC)
 
 ### Removed: `VMWARE_READ_ONLY` / `read_only:` — give the agent a read-only service account instead

@@ -1,9 +1,10 @@
 """VMware Policy — unified audit, policy enforcement, and sanitization for VMware MCP skills."""
 
-__version__ = "1.8.7"
+__version__ = "1.8.8"
 
 from vmware_policy.audit import AuditEngine, get_engine
 from vmware_policy.budget import BudgetExceeded, BudgetTracker, get_budget
+from vmware_policy.cli_guard import guarded
 from vmware_policy.decorators import PolicyDenied, report_tool_failure, vmware_tool
 from vmware_policy.envelope import ENVELOPE_KEYS, paginated
 from vmware_policy.environment import (
@@ -23,6 +24,7 @@ from vmware_policy.undo import UndoStore, get_undo_store
 
 __all__ = [
     "vmware_tool",
+    "guarded",
     "report_tool_failure",
     "sanitize",
     "paginated",
