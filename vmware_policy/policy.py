@@ -29,42 +29,28 @@ class PolicyResult:
     reason: str = ""
 
 
-@dataclass(frozen=True)
-class TierDecision:
-    """Graduated-autonomy outcome: the approval tier an operation needs.
+class PolicyDenied(Exception):
+    """Raised when an operation is denied by policy — a ``deny`` rule matched, or
+    a closed maintenance window blocked a high/critical op. Carries the
+    ``PolicyResult`` so callers can read the rule name and teaching reason.
 
-    tier is one of APPROVAL_TIERS. ``requires_approver`` is True for tiers that
-    must carry a named human approver (dual / review) — the decorator denies
-    such calls when no approver is recorded.
+    Defined here beside ``PolicyResult`` (rather than in ``decorators``) so the
+    surface-agnostic ``guard()`` can raise it without importing the decorator
+    module — which imports ``guard`` in turn (HLD §4, avoids the import cycle).
     """
 
-    tier: str = "none"
-    rule: str = "default"
-    reason: str = ""
-
-    @property
-    def requires_approver(self) -> bool:
-        return self.tier in ("dual", "review")
+    def __init__(self, result: PolicyResult) -> None:
+        self.result = result
+        super().__init__(result.reason)
 
 
 # ── Risk levels ───────────────────────────────────────────────────────
 
 RISK_LEVELS = ("low", "medium", "high", "critical")
 
-# Graduated autonomy tiers, least → most oversight.
-#   none    — no gate (dev / low-risk)
-#   confirm — CLI double-confirm (informational at the harness layer)
-#   dual    — requires a named approver to be recorded (two-person rule)
-#   review  — requires a named approver + intended for explicit human review
-APPROVAL_TIERS = ("none", "confirm", "dual", "review")
-
 #: The policy baseline shipped with the package, used when the operator has
 #: written no ``~/.vmware/rules.yaml`` of their own.
 DEFAULT_RULES_PATH = Path(__file__).parent / "rules_default.yaml"
-
-# Param keys whose string values are treated as resource tags / placement for
-# tier matching (e.g. a VM's folder or environment tag: prod/staging/dev).
-_TAG_PARAM_KEYS = ("tag", "tags", "folder", "resource_tag", "env_tier", "environment")
 
 
 def risk_requires_confirmation(risk_level: str, env: str = "") -> bool:
@@ -79,46 +65,6 @@ def risk_requires_confirmation(risk_level: str, env: str = "") -> bool:
     if risk_level == "high":
         return True
     return False
-
-
-
-#: Values of ``require_declared_environment`` that warn instead of refusing.
-#: The migration release ships ``warn``; the enforcing release ships ``true``.
-_WARN_ONLY_VALUES = frozenset({"warn", "warning", "warn_only", "warn-only"})
-_ENFORCE_VALUES = frozenset({"1", "true", "yes", "on"})
-_OFF_VALUES = frozenset({"0", "false", "no", "off", ""})
-
-#: Undeclared-write warnings already emitted, so a busy estate logs one line per
-#: operation rather than one per call.
-_warned_operations: set[str] = set()
-
-
-def _parse_requirement(setting: Any) -> str:
-    """Normalise ``require_declared_environment`` to 'off' / 'warn' / 'enforce'.
-
-    Strict, like :func:`vmware_policy.readonly._parse`: the recognised strings
-    mean what they say regardless of YAML quoting (``"false"`` used to be a
-    truthy string that landed in the ENFORCE branch — the switch did the
-    opposite of its label). Anything unrecognised fails closed to enforce, with
-    a warning naming the valid values, so a typo cannot silently weaken policy.
-    """
-    if setting is None or setting is False:
-        return "off"
-    if setting is True:
-        return "enforce"
-    normalised = str(setting).strip().lower()
-    if normalised in _OFF_VALUES:
-        return "off"
-    if normalised in _WARN_ONLY_VALUES:
-        return "warn"
-    if normalised in _ENFORCE_VALUES:
-        return "enforce"
-    _log.warning(
-        "require_declared_environment has unrecognised value %r — enforcing "
-        "(fail-closed). Use one of: true, false, warn.",
-        setting,
-    )
-    return "enforce"
 
 
 def _risk_index(risk_level: str) -> int:
@@ -144,10 +90,8 @@ def _min_risk_index(min_risk: Any) -> int:
 
     Unknown reads as index 0, so the rule matches every risk level instead of
     almost none. The direction matters: this threshold gates whether a rule
-    *applies*, so a typo must widen the rule (deny more, require a higher
-    approval tier), never quietly narrow it to the point of never firing.
-    ``required_approval_tier`` keeps the highest matching tier, so a wider
-    match can only raise the bar, never lower it.
+    *applies*, so a typo must widen the rule (deny more), never quietly narrow
+    it to the point of never firing — a wider match can only raise the bar.
     """
     if isinstance(min_risk, str):
         normalised = min_risk.strip().lower()
@@ -156,30 +100,11 @@ def _min_risk_index(min_risk: Any) -> int:
     _log.warning(
         "Unrecognised min_risk_level %r in a policy rule — treating it as %r so "
         "the rule still applies. Expected one of: %s.",
-        min_risk, RISK_LEVELS[0], ", ".join(RISK_LEVELS),
+        min_risk,
+        RISK_LEVELS[0],
+        ", ".join(RISK_LEVELS),
     )
     return 0
-
-
-def _is_warn_only(setting: Any) -> bool:
-    """True when the setting asks for a warning rather than a refusal.
-
-    Kept for the CLI's mode display; delegates to the strict parser so the two
-    can never disagree.
-    """
-    return _parse_requirement(setting) == "warn"
-
-
-def _warn_undeclared_once(operation: str) -> None:
-    if operation in _warned_operations:
-        return
-    _warned_operations.add(operation)
-    _log.warning(
-        "%s ran against a target that declares no environment. A future release "
-        "will REFUSE this. Add 'environment: <name>' to that target in the "
-        "skill's config.yaml. Run 'vmware-audit policy' for details.",
-        operation,
-    )
 
 
 # ── Rule loading with hot-reload ──────────────────────────────────────
@@ -202,8 +127,8 @@ class PolicyEngine:
         """Load the user's rules; fall back to the packaged baseline if absent.
 
         The baseline is a *fallback*, never a merge — an operator who writes
-        ``rules.yaml`` owns policy completely, and an empty ``risk_tiers: []``
-        in their file means exactly that.
+        ``rules.yaml`` owns policy completely, and an empty ``deny: []`` in their
+        file means exactly that (no denials, not "inherit the baseline's").
 
         A user file that exists but cannot be parsed does NOT fall back. Applying
         shipped rules the operator never wrote, while their real ones are broken,
@@ -294,7 +219,10 @@ class PolicyEngine:
             param_names = sorted(params.keys()) if isinstance(params, dict) else []
             _log.warning(
                 "Policy DISABLED — bypassing check: operation=%s env=%s risk=%s param_keys=%s",
-                operation, env, risk_level, param_names,
+                operation,
+                env,
+                risk_level,
+                param_names,
             )
             return PolicyResult(allowed=True, rule="policy_disabled")
 
@@ -323,8 +251,9 @@ class PolicyEngine:
                     "Malformed maintenance_window %r in %s — failing CLOSED: "
                     "high-risk operations are blocked until the rule is fixed. "
                     "Expected 'start' and 'end' as 'HH:MM' strings, e.g. "
-                    "start: \"22:00\" / end: \"06:00\".",
-                    window, self._path,
+                    'start: "22:00" / end: "06:00".',
+                    window,
+                    self._path,
                 )
                 return PolicyResult(
                     allowed=False,
@@ -353,127 +282,12 @@ class PolicyEngine:
             if result and not result.allowed:
                 return result
 
-        # ── Require the target to declare an environment ───────────────
-        # Environment-scoped rules can only protect targets whose environment is
-        # known. Treating an undeclared target as safe made every such rule
-        # inert on estates that never labelled anything, so an undeclared target
-        # is treated as unknown and refused for anything above read-level risk.
-        # Reads are never gated: inspection must keep working untouched.
-        #
-        # Evaluated LAST, after deny rules and the maintenance window: this
-        # check can only ever refuse-or-pass, never grant. Its warn-only
-        # migration form returns allowed=True, and an early return of that
-        # result was found (2026-07-18 review) to bypass an operator's own
-        # unscoped deny rules on exactly the unlabelled targets it protects.
-        requirement = _parse_requirement(
-            self._rules.get("require_declared_environment")
-        )
-        if (
-            requirement != "off"
-            and not env
-            and _risk_index(risk_level) >= RISK_LEVELS.index("medium")
-        ):
-            # Written to be relayed to a human by an agent mid-conversation:
-            # lead with the one-line fix and a copy-paste snippet, not the
-            # policy internals. Reads always work, so say so.
-            fix = (
-                "The one-line fix: in the skill's config.yaml, under this "
-                "target, add\n"
-                "\n"
-                "    environment: lab    # or: staging / production\n"
-                "\n"
-                "then retry — no restart needed. Read-only operations are not "
-                "affected and keep working. ('vmware-audit policy' shows the "
-                "rules in force.)"
-            )
-            if requirement == "warn":
-                # Migration window: warn loudly, allow anyway. Flipping this
-                # setting to true is the whole of the enforcing release.
-                _warn_undeclared_once(operation)
-                return PolicyResult(
-                    allowed=True,
-                    rule="undeclared_environment_warning",
-                    reason=(
-                        f"'{operation}' worked, but heads-up: its target hasn't "
-                        f"declared which environment it is, and a future release "
-                        f"will refuse state-changing operations against "
-                        f"undeclared targets. {fix}"
-                    ),
-                )
-            return PolicyResult(
-                allowed=False,
-                rule="undeclared_environment",
-                reason=(
-                    f"'{operation}' would change infrastructure state, but this "
-                    f"target hasn't declared which environment it is, so the "
-                    f"right safety rules can't be applied. {fix}"
-                ),
-            )
-
+        # Read/write authorization beyond the operator's own deny rules is the
+        # vCenter/NSX account's job (RBAC, HLD §1/§5). The v1.8 "require the
+        # target to declare an environment, and refuse it otherwise" gate was
+        # removed in v1.8.7 — an unlabelled target is simply not matched by any
+        # environment-scoped deny rule, never refused for lack of a label.
         return PolicyResult(allowed=True, rule="default_allow")
-
-    def required_approval_tier(
-        self,
-        operation: str,
-        *,
-        env: str = "",
-        risk_level: str = "low",
-        params: dict[str, Any] | None = None,
-    ) -> TierDecision:
-        """Return the approval tier this operation needs (graduated autonomy).
-
-        Evaluated from a ``risk_tiers`` list in rules.yaml — each entry matches
-        on operation glob / environment / resource tag / minimum risk and maps
-        to a tier (none/confirm/dual/review). The FIRST matching, HIGHEST tier
-        wins so a prod-tagged destructive op can't be down-graded by a looser
-        rule listed earlier. No config → tier ``none`` (backward compatible).
-        """
-        self._maybe_reload()
-        tiers = self._rules.get("risk_tiers") if self._rules else None
-        if not tiers:
-            return TierDecision(tier="none", rule="no_tiers")
-
-        tags = _extract_tags(params)
-        best: TierDecision | None = None
-        for rule in tiers:
-            tier = str(rule.get("tier", "")).lower()
-            if tier not in APPROVAL_TIERS:
-                continue
-            if not self._tier_rule_matches(rule, operation, env, risk_level, tags):
-                continue
-            if best is None or APPROVAL_TIERS.index(tier) > APPROVAL_TIERS.index(best.tier):
-                best = TierDecision(
-                    tier=tier,
-                    rule=str(rule.get("name", "risk_tier")),
-                    reason=str(rule.get("reason", "")),
-                )
-        return best or TierDecision(tier="none", rule="no_tier_match")
-
-    def _tier_rule_matches(
-        self,
-        rule: dict[str, Any],
-        operation: str,
-        env: str,
-        risk_level: str,
-        tags: set[str],
-    ) -> bool:
-        """Match a risk_tiers entry against the current call."""
-        if "operations" in rule:
-            ops = rule["operations"]
-            if not ops or not any(self._pattern_match(op, operation) for op in ops):
-                return False
-        envs = rule.get("environments", [])
-        if envs and not env:
-            return False  # rule scoped to envs but call has none → no match
-        if envs and not any(self._pattern_match(e, env) for e in envs):
-            return False
-        rule_tags = {str(t) for t in (rule.get("tags") or [])}
-        if rule_tags and not (rule_tags & tags):
-            return False
-        min_risk = rule.get("min_risk_level")
-        if min_risk and _risk_index(risk_level) < _min_risk_index(min_risk):
-            return False
-        return True
 
     def _rule_matches(
         self,
@@ -492,12 +306,10 @@ class PolicyEngine:
             if not ops or not any(self._pattern_match(op, operation) for op in ops):
                 return False
 
-        # Match by environment — same semantics as _tier_rule_matches (the two
-        # diverged in the 2026-07-18 release: this path kept exact matching and
-        # let an EMPTY env pass the filter. With env now the *declared*
-        # environment — "" for every unlabelled target — that made a
-        # production-scoped deny fire on every lab target, and a glob written
-        # to the documented 'prod*' idiom never fire at all).
+        # Match by environment. env is the target's *declared* environment
+        # ("" for every unlabelled target), so a rule scoped to environments must
+        # not fire when the call has no env — otherwise a production-scoped deny
+        # would match every unlabelled / lab target (2026-07-18 review).
         envs = rule.get("environments", [])
         if envs and not env:
             return False  # rule scoped to envs but target declares none → no match
@@ -565,30 +377,10 @@ class PolicyEngine:
             _log.warning(
                 "change_limits configured for '%s' but limit enforcement is not yet "
                 "implemented — limits are NOT being enforced. Params: %s",
-                operation, list(params.keys()),
+                operation,
+                list(params.keys()),
             )
         return None
-
-
-def _extract_tags(params: dict[str, Any] | None) -> set[str]:
-    """Collect resource-tag-like string values from params for tier matching.
-
-    Looks at a fixed set of keys (tag/tags/folder/...) and flattens list values
-    so ``{"tags": ["prod", "pci"]}`` and ``{"folder": "prod"}`` both yield
-    ``{"prod", ...}``.
-    """
-    if not params:
-        return set()
-    out: set[str] = set()
-    for key in _TAG_PARAM_KEYS:
-        if key not in params:
-            continue
-        val = params[key]
-        if isinstance(val, str):
-            out.add(val)
-        elif isinstance(val, (list, tuple, set)):
-            out.update(str(v) for v in val)
-    return out
 
 
 # ── Singleton ─────────────────────────────────────────────────────────
@@ -615,7 +407,8 @@ def get_policy_engine(rules_path: Path | str | None = None) -> PolicyEngine:
             _log.warning(
                 "get_policy_engine(%s) ignored — singleton already initialized "
                 "with %s; call reset_policy_engine() first to rebind.",
-                requested, _engine._path,
+                requested,
+                _engine._path,
             )
     return _engine
 

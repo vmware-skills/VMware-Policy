@@ -190,71 +190,15 @@ vm_name = sanitize(api_response["name"])
 vm_notes = sanitize(api_response.get("annotation", ""), max_len=200)
 ```
 
-## Read-Only Gate
-
-Structural enforcement of read-only mode: write tools are removed from a skill's MCP
-registry before it serves, so `list_tools()` never offers them. `@vmware_tool` is the
-per-call gate; this is the per-server one.
-
-### Signatures
-
-```python
-def apply_read_only_gate(mcp, skill: str, config_flag: bool | None = None) -> list[str]:
-    """Remove every write tool from ``mcp`` when read-only mode is on.
-
-    Returns the sorted names removed (empty when off). Idempotent. Call once,
-    after all tool modules have registered and before the server runs.
-    """
-
-def read_only_enabled(skill: str, config_flag: bool | None = None) -> bool:
-    """The same decision, without touching a registry."""
-
-def read_only_status(skill: str, config_flag: bool | None = None) -> ReadOnlyStatus:
-    """The decision plus its provenance, for a skill's ``doctor`` to report."""
-```
-
-`ReadOnlyStatus` is a NamedTuple: `enabled` (bool), `source` (env var name, `"config"`, or
-`"default"`), `raw` (the value as written, `""` when unset), `recognised` (False when a
-typo fell through to on). Tests pin `read_only_status` and `read_only_enabled` to identical
-conclusions case by case, so a doctor built on the former cannot disagree with the gate.
-
-### Precedence
-
-`VMWARE_<SKILL>_READ_ONLY` -> `VMWARE_READ_ONLY` -> `config_flag` -> off. `skill` is the
-hyphenated name and is normalised to the env var (`vmware-nsx-security` ->
-`VMWARE_NSX_SECURITY_READ_ONLY`). Skills without a config file pass `config_flag=None`.
-
-### Tool Classification
-
-| Priority | Signal | Verdict |
-|:--:|--------|---------|
-| 1 | Name in `FORCE_WRITE` | write |
-| 2 | `[WRITE]` docstring prefix | write |
-| 3 | `readOnlyHint=False` annotation | write |
-| 4 | `[READ]` docstring prefix | read |
-| 5 | `readOnlyHint=True` annotation | read |
-| 6 | Nothing conclusive | write |
-
-The docstring marker outranks the annotation because it has full family coverage, while
-vmware-harden and vmware-debug build tools through a `build_server()` factory that passes
-no annotations. `FORCE_WRITE` currently holds `vm_guest_download` (aiops),
-`get_supervisor_kubeconfig` and `get_tkc_kubeconfig` (vks) -- all read-only upstream but
-writing a credential-bearing file to a caller-supplied local path.
-
-### Failure Modes
-
-| Condition | Behaviour |
-|-----------|-----------|
-| Registry cannot be enumerated | `ReadOnlyGateError` -- start-up aborts |
-| A removed tool survives the sweep | `ReadOnlyGateError` -- start-up aborts |
-| Switch value unparseable (`ture`) | Resolves to **on** + warning; does *not* abort |
-| Mode off | Returns `[]`, nothing removed |
-
 ## Risk Levels
 
-| Level | Confirmation Required | Examples |
-|-------|:---------------------:|---------|
-| `low` | No | list, get, info, status |
-| `medium` | No | reconfigure, update settings |
-| `high` | Yes | power off, migrate, snapshot revert |
-| `critical` | Yes + production approval | delete VM, delete cluster, delete security policy |
+Each operation is classified by risk level. The level is recorded in the audit
+row and can be matched by a `deny` rule's `min_risk_level`; it does not by
+itself gate execution.
+
+| Level | Examples |
+|-------|---------|
+| `low` | list, get, info, status |
+| `medium` | reconfigure, update settings |
+| `high` | power off, migrate, snapshot revert |
+| `critical` | delete VM, delete cluster, delete security policy |

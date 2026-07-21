@@ -33,22 +33,19 @@ import traceback
 from functools import wraps
 from typing import Any
 
-from vmware_policy.audit import detect_agent, get_engine
-from vmware_policy.environment import resolve_environment
+from vmware_policy.audit import detect_agent
 from vmware_policy.budget import BudgetExceeded, get_budget
+from vmware_policy.guard import audit_call, guard
 from vmware_policy.patterns import PatternMatch, get_pattern_engine
-from vmware_policy.policy import PolicyResult, get_policy_engine
+from vmware_policy.policy import PolicyDenied, PolicyResult
 from vmware_policy.sanitize import sanitize
 
 _log = logging.getLogger("vmware-policy.decorators")
 
-
-class PolicyDenied(Exception):
-    """Raised when an operation is denied by policy."""
-
-    def __init__(self, result: PolicyResult) -> None:
-        self.result = result
-        super().__init__(result.reason)
+# PolicyDenied moved to policy.py (beside PolicyResult) so guard.py can raise it
+# without importing this module (which imports guard). The import above binds it
+# into this namespace, so `from vmware_policy.decorators import PolicyDenied` and
+# the package __init__ keep working.
 
 
 # ── Returned failures ─────────────────────────────────────────────────────
@@ -164,8 +161,14 @@ def vmware_tool(
             @wraps(func)
             async def wrapper(*args: Any, **kwargs: Any) -> Any:
                 state = _CallState(
-                    func, args, kwargs, signature, _sensitive, risk_level,
-                    timeout_seconds, undo,
+                    func,
+                    args,
+                    kwargs,
+                    signature,
+                    _sensitive,
+                    risk_level,
+                    timeout_seconds,
+                    undo,
                 )
                 # Fresh binding per call, restored below: a nested tool's
                 # `report_tool_failure` must not mark its caller failed, and a
@@ -192,11 +195,18 @@ def vmware_tool(
                     _finalize(state)
                     _failure_signal.reset(token)
         else:
+
             @wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 state = _CallState(
-                    func, args, kwargs, signature, _sensitive, risk_level,
-                    timeout_seconds, undo,
+                    func,
+                    args,
+                    kwargs,
+                    signature,
+                    _sensitive,
+                    risk_level,
+                    timeout_seconds,
+                    undo,
                 )
                 # Fresh binding per call, restored below: a nested tool's
                 # `report_tool_failure` must not mark its caller failed, and a
@@ -249,10 +259,21 @@ class _CallState:
     """
 
     __slots__ = (
-        "skill", "tool_name", "agent", "start", "status", "result",
-        "policy_result", "pattern_match", "audit", "policy",
-        "safe_params", "env", "target", "risk_level", "timeout_seconds",
-        "rationale", "approved_by", "risk_tier", "undo",
+        "skill",
+        "tool_name",
+        "agent",
+        "start",
+        "status",
+        "result",
+        "policy_result",
+        "pattern_match",
+        "safe_params",
+        "target",
+        "risk_level",
+        "timeout_seconds",
+        "rationale",
+        "approved_by",
+        "undo",
     )
 
     def __init__(
@@ -277,35 +298,25 @@ class _CallState:
         self.pattern_match: PatternMatch | None = None
         self.risk_level = risk_level
         self.timeout_seconds = timeout_seconds
-        self.audit = get_engine()
-        self.policy = get_policy_engine()
 
         # Map positional args to parameter names so they appear in the audit
         # log and participate in env scoping (previously only kwargs did).
         params = _bind_params(signature, args, kwargs)
         self.safe_params = _redact(params, sensitive)
-        # Policy scopes by *environment*, not by target name. The target names
-        # an estate uses ("prod-vc01", "vcenter-lab") never equal the words a
-        # rule is written against, so passing the name straight through left
-        # every environment-scoped rule unfireable. Resolve it to whatever the
-        # target's config declares; an empty target is forwarded so the skill's
-        # resolver can map it to its configured default_target.
-        #
-        # BOTH values are kept: the pattern engine's rate limits and circuit
-        # breakers are keyed per-TARGET, and feeding them the environment
-        # pooled every 'production' vCenter into one counter — one flaky
-        # target tripped the breaker for all of them (2026-07-18 review).
+        # Keep the target name: the pattern engine's rate limits and circuit
+        # breakers are keyed per-TARGET (feeding them the environment pooled
+        # every 'production' vCenter into one counter — one flaky target tripped
+        # the breaker for all of them, 2026-07-18 review). The environment itself
+        # is resolved inside guard() for policy scoping, so it is not stored here.
         target = params.get("target", params.get("env", ""))
         self.target = str(target) if target else ""
-        self.env = resolve_environment(self.target)
 
         # Accountability trail (SOC2 / 等保: who authorized this, and why).
-        # Sourced from env so an approval gate / pilot can inject context
-        # without changing every tool signature. risk_tier is filled by the
-        # policy pre-check (graduated autonomy).
+        # Self-attested audit enrichment, not authorization (HLD §8.3): sourced
+        # from env so an approval workflow / pilot can inject context without
+        # changing every tool signature.
         self.rationale = os.environ.get("VMWARE_AUDIT_RATIONALE", "")
         self.approved_by = os.environ.get("VMWARE_AUDIT_APPROVED_BY", "")
-        self.risk_tier = ""
 
 
 def _bind_params(
@@ -343,50 +354,24 @@ def _pre_check(state: _CallState) -> None:
     never block the call (fail-open by design — a broken pattern file must
     not take down every MCP tool).
     """
-    state.policy_result = state.policy.check_allowed(
-        state.tool_name,
-        env=state.env,
-        risk_level=state.risk_level,
-        params=state.safe_params,
-    )
-    if not state.policy_result.allowed:
-        state.status = "denied"
-        state.result = {
-            "error": state.policy_result.reason,
-            "rule": state.policy_result.rule,
-        }
-        raise PolicyDenied(state.policy_result)
-
-    # Graduated autonomy — what approval tier does this op need? Record it on
-    # the audit trail, and enforce: tiers that require a named approver (dual /
-    # review) are denied when none was recorded (VMWARE_AUDIT_APPROVED_BY).
-    tier = state.policy.required_approval_tier(
-        state.tool_name,
-        env=state.env,
-        risk_level=state.risk_level,
-        params=state.safe_params,
-    )
-    state.risk_tier = tier.tier
-    if tier.requires_approver and not state.approved_by:
-        # Relayed to a human by an agent mid-conversation — lead with what to
-        # do, in copy-paste form, before the policy mechanics.
-        reason = (
-            f"'{state.tool_name}' on '{state.env or 'this target'}' needs "
-            f"'{tier.tier}' approval — a named human has to sign off before it "
-            f"runs (rule: {tier.rule}). To proceed:\n"
-            f"\n"
-            f'    export VMWARE_AUDIT_APPROVED_BY="<who approved this>"\n'
-            f'    export VMWARE_AUDIT_RATIONALE="<why>"\n'
-            f"\n"
-            f"then retry. Or run it against a non-production target instead."
+    # Authorize through the shared guard so the CLI and MCP surfaces apply the
+    # exact same policy (HLD §4, I-3). guard() is a no-op unless the operator
+    # wrote deny / maintenance rules. Approval tiers were removed in v1.8.7:
+    # read/write authorization is the vCenter account's job (RBAC), not a
+    # per-call gate (HLD §5/§9). Preserve the denied-call audit shape by
+    # recording the reason/rule before re-raising.
+    try:
+        state.policy_result = guard(
+            state.skill,
+            state.tool_name,
+            state.safe_params,
+            risk_level=state.risk_level,
+            target=state.target,
         )
-        if tier.reason:
-            reason += f" Policy note: {tier.reason}"
-        denial = PolicyResult(allowed=False, rule=f"approval_tier:{tier.tier}", reason=reason)
-        state.policy_result = denial
+    except PolicyDenied as exc:
         state.status = "denied"
-        state.result = {"error": reason, "rule": denial.rule}
-        raise PolicyDenied(denial)
+        state.result = {"error": exc.result.reason, "rule": exc.result.rule}
+        raise
 
     # Budget / runaway guard — only for calls policy already allowed, so denied
     # calls do not count. A trip raises BudgetExceeded (a hard stop); record the
@@ -421,11 +406,7 @@ def _annotate_result(state: _CallState, result: Any) -> Any:
     state.result = result
     if _returned_failure(result) or _failure_signal.get() is not None:
         state.status = "error"
-    if (
-        state.pattern_match
-        and state.pattern_match.armed
-        and isinstance(result, dict)
-    ):
+    if state.pattern_match and state.pattern_match.armed and isinstance(result, dict):
         result.setdefault("_pattern_id", state.pattern_match.pattern.pattern_id)
         result.setdefault("_pattern_armed", True)
     _record_undo(state, result)
@@ -447,8 +428,7 @@ def _record_undo(state: _CallState, result: Any) -> None:
     try:
         descriptor = state.undo(state.safe_params, result)
     except Exception:  # noqa: BLE001 — undo computation must not fail the call
-        _log.warning("undo callable for %s.%s raised", state.skill, state.tool_name,
-                     exc_info=True)
+        _log.warning("undo callable for %s.%s raised", state.skill, state.tool_name, exc_info=True)
         return
     if not descriptor:
         return
@@ -464,8 +444,7 @@ def _record_undo(state: _CallState, result: Any) -> None:
         if undo_id and isinstance(result, dict):
             result.setdefault("_undo_id", undo_id)
     except Exception:  # noqa: BLE001 — recording is best-effort
-        _log.warning("failed to record undo for %s.%s", state.skill, state.tool_name,
-                     exc_info=True)
+        _log.warning("failed to record undo for %s.%s", state.skill, state.tool_name, exc_info=True)
 
 
 def _capture_error(state: _CallState, exc: Exception) -> None:
@@ -475,9 +454,7 @@ def _capture_error(state: _CallState, exc: Exception) -> None:
     state.status = "error"
     state.result = {
         "error": sanitize(_redact_secrets_text(str(exc)), 500),
-        "traceback": sanitize(
-            _redact_secrets_text(traceback.format_exc()[-500:]), 500
-        ),
+        "traceback": sanitize(_redact_secrets_text(traceback.format_exc()[-500:]), 500),
     }
 
 
@@ -496,7 +473,10 @@ def _finalize(state: _CallState) -> None:
     if state.timeout_seconds and duration > state.timeout_seconds * 1000:
         _log.warning(
             "%s.%s took %dms — exceeded timeout_seconds=%d (advisory, not cancelled)",
-            state.skill, state.tool_name, duration, state.timeout_seconds,
+            state.skill,
+            state.tool_name,
+            duration,
+            state.timeout_seconds,
         )
 
     bypassed = state.policy_result and state.policy_result.rule == "policy_disabled"
@@ -516,19 +496,19 @@ def _finalize(state: _CallState) -> None:
     pattern_id = state.pattern_match.pattern.pattern_id if state.pattern_match else ""
     pattern_armed = bool(state.pattern_match and state.pattern_match.armed)
 
-    state.audit.log(
-        skill=state.skill,
-        tool=state.tool_name,
+    # Single audit sink for every surface (I-8). risk_tier is gone with the
+    # approval tiers; `user` is left to AuditEngine.log, which fills the OS user.
+    audit_call(
+        state.skill,
+        state.tool_name,
         params=state.safe_params,
         result=_with_pattern_context(state.result, pattern_id, pattern_armed),
         status=final_status,
         duration_ms=duration,
         agent=state.agent,
-        user="",
         risk_level=state.risk_level,
         rationale=state.rationale,
         approved_by=state.approved_by,
-        risk_tier=state.risk_tier,
     )
 
 

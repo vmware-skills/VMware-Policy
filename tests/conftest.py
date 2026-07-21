@@ -44,17 +44,16 @@ def _reset_budget(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _declared_environment():
-    """Treat every target as a declared lab environment by default.
+    """Register a resolver labelling every target ``lab`` by default.
 
-    The shipped policy baseline refuses writes against a target that declares no
-    environment. That is the product behaviour we want, but it is not what these
-    unit tests are exercising — they test decorator, audit, and undo mechanics.
-    Declaring `lab` puts them in the position of a correctly configured install,
-    so the baseline stays active (and its other rules keep being exercised)
-    without every write test asserting the same denial.
+    The declared-environment REFUSAL was removed in v1.8.7 (read/write authz is
+    the vCenter account's job now), so this no longer gates anything. It stays
+    because it gives the decorator / audit / undo unit tests a registered
+    resolver — env resolution returns a real label instead of ``""`` and does not
+    emit the "no resolver registered" warning on every call.
 
-    Tests that are specifically about the declaration rule clear this themselves
-    (see test_declared_environment.py).
+    Tests specifically about environment resolution register their own resolver
+    and override this (see test_guard.py).
     """
     from vmware_policy.environment import set_environment_resolver
 

@@ -48,7 +48,7 @@ def audited(monkeypatch):
         def log(self, **kw):
             rows.append(kw)
 
-    monkeypatch.setattr("vmware_policy.decorators.get_engine", lambda: _Recorder())
+    monkeypatch.setattr("vmware_policy.guard.get_engine", lambda: _Recorder())
     return rows
 
 
@@ -296,7 +296,7 @@ def test_a_precheck_denial_records_denied_and_never_runs_the_body(audited, monke
             )
 
     monkeypatch.setattr(
-        "vmware_policy.decorators.get_policy_engine", lambda: _DenyingEngine()
+        "vmware_policy.guard.get_policy_engine", lambda: _DenyingEngine()
     )
 
     @vmware_tool(risk_level="high")

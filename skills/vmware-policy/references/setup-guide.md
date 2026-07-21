@@ -58,38 +58,6 @@ vi ~/.vmware/rules.yaml
 | Variable | Required | Description |
 |----------|:--------:|-------------|
 | `VMWARE_POLICY_DISABLED` | No | Set to `1` to bypass policy checks (still logged) |
-| `VMWARE_READ_ONLY` | No | Set to `true` to put **every** installed VMware skill into read-only mode |
-| `VMWARE_<SKILL>_READ_ONLY` | No | Per-skill override, wins over the family variable (e.g. `VMWARE_NSX_SECURITY_READ_ONLY`) |
-
-### Read-Only Mode (Operators)
-
-Off by default. When on, each skill's MCP server removes every write tool from its registry
-before serving, so `list_tools()` never offers them -- structural, not a prompt instruction
-the model may ignore. Resolution order, highest first:
-
-| Priority | Signal | Scope |
-|---|---|---|
-| 1 | `VMWARE_<SKILL>_READ_ONLY` | One skill |
-| 2 | `VMWARE_READ_ONLY` | Every installed VMware skill |
-| 3 | `read_only: true` in that skill's `config.yaml` | One skill (skills that have a config file) |
-| 4 | (nothing set) | Off |
-
-The env vars come first so a deployment can be locked down from the MCP client's `env`
-block without editing any config file. The combination `{"VMWARE_READ_ONLY": "true",
-"VMWARE_<SKILL>_READ_ONLY": "false"}` locks the estate while leaving one skill writable --
-the documented use is keeping vmware-pilot able to orchestrate while every downstream skill
-enforces the lock on its own tools.
-
-**Fail-closed.** Two conditions abort a server's start-up with `ReadOnlyGateError`: the
-FastMCP tool registry cannot be enumerated (usually an incompatible `mcp` version), or a
-removal did not take effect and a write tool survived. An unparseable value
-(`VMWARE_READ_ONLY=ture`) does *not* abort -- it resolves to **on** with a warning naming
-the accepted values, so a typo locks the deployment down rather than leaving it open.
-
-**Verifying.** Each server logs a warning naming every tool it withheld at start-up. Skills
-that ship a `doctor` (e.g. `vmware-log-insight doctor`) report the resolved state and its
-source via `read_only_status()` -- the same resolver the gate uses, so the two cannot
-disagree.
 
 ## Integration Into a New Skill
 
@@ -135,45 +103,6 @@ for tool in registered_tools:
     assert getattr(tool, "_is_vmware_tool", False), \
         f"{tool.__name__} not decorated with @vmware_tool"
 ```
-
-### 5. Apply the Read-Only Gate
-
-Call it once, after every tool module has registered and before the server runs:
-
-```python
-from vmware_policy import apply_read_only_gate
-
-WITHHELD_WRITE_TOOLS: list[str] = apply_read_only_gate(
-    mcp, "vmware-myskill", config_flag=_config_read_only()
-)
-```
-
-Pass `config_flag=None` if the skill has no config file -- the env vars then become the
-only switch. Keep the module-level name so the server can log what was withheld. The gate
-classifies by the `[READ]`/`[WRITE]` docstring marker your tool descriptions already carry,
-so a new write tool is withheld correctly with no extra registration.
-
-### 6. Report the State in `doctor`
-
-If the skill ships a `doctor`, add a check that calls `read_only_status()` rather than
-re-walking the precedence chain -- ten hand-rolled copies is ten chances to drift from the
-gate, and a doctor that disagrees with the gate is worse than no doctor. It must never
-fail: read-only being on is a posture, not a fault.
-
-```python
-from vmware_policy.readonly import read_only_status
-
-def _check_read_only() -> tuple[bool, str]:
-    status = read_only_status("vmware-myskill", _config_read_only())
-    if not status.recognised:
-        return True, f"{status.source}={status.raw!r} unrecognised -> resolves to ON"
-    if status.enabled:
-        return True, f"ON (from {status.source}) -- write tools are withheld"
-    return True, f"off (from {status.source}) -- write tools are exposed"
-```
-
-Pass the **same** `config_flag` the MCP server passes `apply_read_only_gate`, or the two
-will report different states for the same deployment.
 
 ## Security
 

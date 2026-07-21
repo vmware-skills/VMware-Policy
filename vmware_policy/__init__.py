@@ -1,6 +1,6 @@
 """VMware Policy — unified audit, policy enforcement, and sanitization for VMware MCP skills."""
 
-__version__ = "1.8.5"
+__version__ = "1.8.7"
 
 from vmware_policy.audit import AuditEngine, get_engine
 from vmware_policy.budget import BudgetExceeded, BudgetTracker, get_budget
@@ -11,14 +11,13 @@ from vmware_policy.environment import (
     resolve_environment,
     set_environment_resolver,
 )
+# NOTE: `guard` / `audit_call` are intentionally NOT re-exported here. The name
+# `guard` would shadow the submodule `vmware_policy.guard` in this package's
+# namespace, so `vmware_policy.guard.<x>` (and monkeypatch's string-path
+# resolution) would hit the function, not the module. Import them from the
+# submodule: `from vmware_policy.guard import guard, audit_call`.
 from vmware_policy.patterns import Pattern, PatternMatch, get_pattern_engine
-from vmware_policy.policy import TierDecision, get_policy_engine
-from vmware_policy.readonly import (
-    FAMILY_ENV,
-    ReadOnlyGateError,
-    apply_read_only_gate,
-    read_only_enabled,
-)
+from vmware_policy.policy import get_policy_engine
 from vmware_policy.sanitize import sanitize
 from vmware_policy.undo import UndoStore, get_undo_store
 
@@ -26,15 +25,11 @@ __all__ = [
     "vmware_tool",
     "report_tool_failure",
     "sanitize",
-    "apply_read_only_gate",
     "paginated",
     "ENVELOPE_KEYS",
     "mtime_cached_loader",
     "set_environment_resolver",
     "resolve_environment",
-    "read_only_enabled",
-    "ReadOnlyGateError",
-    "FAMILY_ENV",
     "Pattern",
     "PatternMatch",
     "get_pattern_engine",
@@ -45,7 +40,6 @@ __all__ = [
     "BudgetExceeded",
     "BudgetTracker",
     "get_budget",
-    "TierDecision",
     "UndoStore",
     "get_undo_store",
 ]

@@ -21,11 +21,11 @@ schema and loader — so each skill registers a lookup at server start:
     set_environment_resolver(lambda target: _config().environment_for(target))
 
 An unregistered resolver, an unknown target, a blank declaration, and a
-resolver that raises all produce the same answer: ``""``, meaning *undeclared*.
-Undeclared is treated as unknown rather than safe — the policy baseline refuses
-writes against it. A skill that forgets to register a resolver therefore fails
-closed and loudly, which is the intended direction for a control whose previous
-failure mode was silence.
+resolver that raises all produce the same answer: ``""`` (unlabeled). An
+unlabeled target simply does not match any environment-scoped ``deny`` rule — it
+is **never refused** for lack of a label (HLD §6, D-3). Environment is an
+optional convenience for writing env-scoped rules, not a mandatory declaration;
+the v1.8 "a future release will refuse undeclared targets" plan was cut in v1.8.7.
 """
 
 from __future__ import annotations
@@ -96,9 +96,10 @@ def resolve_environment(target: str) -> str:
     if resolver is None:
         _warn_once(
             target,
-            "No environment resolver registered — every target reads as "
-            "undeclared. The MCP server should call set_environment_resolver() "
-            "at start-up.",
+            "No environment resolver registered — targets read as unlabeled, so "
+            "environment-scoped 'deny' rules (if any) will not match. Harmless "
+            "unless you use them; register one with set_environment_resolver() at "
+            "start-up if you do.",
         )
         return ""
 
@@ -111,11 +112,10 @@ def resolve_environment(target: str) -> str:
     if not declared or not str(declared).strip():
         _warn_once(
             target,
-            f"Target {target!r} declares no environment, so environment-scoped "
-            f"policy cannot apply to it and the declared-environment rule "
-            f"gates state-changing operations (currently a warning; a future "
-            f"release refuses them). Add 'environment: <name>' to its config "
-            f"entry.",
+            f"Target {target!r} declares no environment label, so any "
+            f"environment-scoped 'deny' rules will not match it. Harmless unless "
+            f"you rely on such rules; add 'environment: <name>' to its config "
+            f"entry if you do.",
         )
         return ""
     return str(declared).strip()
@@ -128,7 +128,9 @@ def _warn_once(target: str, message: str) -> None:
     _log.warning("%s", message)
 
 
-def mtime_cached_loader(env_var: str, default_path: Any, loader: Callable[[Any], Any]) -> Callable[[], Any]:
+def mtime_cached_loader(
+    env_var: str, default_path: Any, loader: Callable[[Any], Any]
+) -> Callable[[], Any]:
     """Wrap a config loader so it re-parses only when the file actually changed.
 
     The environment resolver runs on *every* tool call, and a resolver that
