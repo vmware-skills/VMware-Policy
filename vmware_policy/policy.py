@@ -53,20 +53,6 @@ RISK_LEVELS = ("low", "medium", "high", "critical")
 DEFAULT_RULES_PATH = Path(__file__).parent / "rules_default.yaml"
 
 
-def risk_requires_confirmation(risk_level: str, env: str = "") -> bool:
-    """Determine if a risk level requires human confirmation.
-
-    - critical: always requires confirmation + approval in production
-    - high: requires confirmation
-    - medium/low: no confirmation
-    """
-    if risk_level == "critical":
-        return True
-    if risk_level == "high":
-        return True
-    return False
-
-
 def _risk_index(risk_level: str) -> int:
     """RISK_LEVELS.index that cannot raise: unknown reads as critical.
 
