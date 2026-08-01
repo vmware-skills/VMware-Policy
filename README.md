@@ -1,4 +1,4 @@
-<!-- mcp-name: io.github.zw008/vmware-policy -->
+<!-- mcp-name: io.github.vmware-skills/vmware-policy -->
 
 # VMware Policy
 
