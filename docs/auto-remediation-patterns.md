@@ -1,6 +1,6 @@
 # Auto-Remediation Patterns — Design
 
-> **Status**: Wired into the `@vmware_tool` decorator as of v1.5.17 (in development). Pattern matching, rate limiting, and circuit-breaker are live. Auto-execution and trigger-against-historical-audit-events are still future work — see "What we are NOT shipping yet" below. Implementation: [`vmware_policy/patterns.py`](../vmware_policy/patterns.py). Candidate scanner: [`scripts/extract_patterns.py`](../scripts/extract_patterns.py). First reference pattern: [VMware-Storage/patterns/iscsi-target-stale-rescan.yaml](https://github.com/zw008/VMware-Storage/blob/main/patterns/iscsi-target-stale-rescan.yaml).
+> **Status**: Wired into the `@vmware_tool` decorator as of v1.5.17 (in development). Pattern matching, rate limiting, and circuit-breaker are live. Auto-execution and trigger-against-historical-audit-events are still future work — see "What we are NOT shipping yet" below. Implementation: [`vmware_policy/patterns.py`](../vmware_policy/patterns.py). Candidate scanner: [`scripts/extract_patterns.py`](../scripts/extract_patterns.py). First reference pattern: [VMware-Storage/patterns/iscsi-target-stale-rescan.yaml](https://github.com/vmware-skills/VMware-Storage/blob/main/patterns/iscsi-target-stale-rescan.yaml).
 
 ## Goal
 

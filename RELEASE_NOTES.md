@@ -248,7 +248,7 @@ Two additions, both closing gaps this release exposed:
 
 ## v1.8.0 (2026-07-18) — read-only mode, policy baseline that actually loads, list envelope
 
-Driven by [VMware-AIops#31](https://github.com/zw008/VMware-AIops/issues/31), where an
+Driven by [VMware-AIops#31](https://github.com/vmware-skills/VMware-AIops/issues/31), where an
 operator running Llama 3.3 70B (Goose / OpenShift AI, on-prem H100) had to hand-write 17
 prompt guardrails to make tool calling reliable. A prompt is advisory; a model can ignore
 it. Every guardrail that could be moved into the harness has been.

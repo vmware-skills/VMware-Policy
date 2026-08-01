@@ -22,7 +22,7 @@ vmware-audit stats   # verify
 ### Development
 
 ```bash
-git clone https://github.com/zw008/VMware-Policy.git
+git clone https://github.com/vmware-skills/VMware-Policy.git
 cd VMware-Policy
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"

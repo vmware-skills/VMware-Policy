@@ -4,7 +4,7 @@
   "title": "VMware Policy",
   "description": "Unified audit logging, policy enforcement, and input sanitization for the VMware MCP skill family.",
   "repository": {
-    "url": "https://github.com/zw008/VMware-Policy",
+    "url": "https://github.com/vmware-skills/VMware-Policy",
     "source": "github"
   },
   "version": "1.8.8",

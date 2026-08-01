@@ -12,17 +12,17 @@ installer:
 allowed-tools:
   - Bash
 user-invocable: false
-metadata: {"openclaw":{"requires":{"bins":["vmware-audit"],"config":["~/.vmware/rules.yaml"]},"optional":{"env":["CLAUDE_SESSION_ID","OLLAMA_HOST"]},"homepage":"https://github.com/zw008/VMware-Policy","emoji":"🛡️","os":["macos","linux"]}}
+metadata: {"openclaw":{"requires":{"bins":["vmware-audit"],"config":["~/.vmware/rules.yaml"]},"optional":{"env":["CLAUDE_SESSION_ID","OLLAMA_HOST"]},"homepage":"https://github.com/vmware-skills/VMware-Policy","emoji":"🛡️","os":["macos","linux"]}}
 ---
 
 # VMware Policy
 
-> **Disclaimer**: This is a community-maintained open-source project and is **not affiliated with, endorsed by, or sponsored by VMware, Inc. or Broadcom Inc.** "VMware" and "vSphere" are trademarks of Broadcom. Source code is publicly auditable at [github.com/zw008/VMware-Policy](https://github.com/zw008/VMware-Policy) under the MIT license.
+> **Disclaimer**: This is a community-maintained open-source project and is **not affiliated with, endorsed by, or sponsored by VMware, Inc. or Broadcom Inc.** "VMware" and "vSphere" are trademarks of Broadcom. Source code is publicly auditable at [github.com/vmware-skills/VMware-Policy](https://github.com/vmware-skills/VMware-Policy) under the MIT license.
 
 Unified audit logging, policy enforcement, and input sanitization -- the infrastructure layer for the entire VMware MCP skill family.
 
 > **Infrastructure dependency**: All 8 VMware skills depend on vmware-policy. It is auto-installed and provides the `@vmware_tool` decorator, `sanitize()`, and the shared audit database.
-> **Family**: [vmware-aiops](https://github.com/zw008/VMware-AIops) (VM lifecycle), [vmware-monitor](https://github.com/zw008/VMware-Monitor) (read-only monitoring), [vmware-storage](https://github.com/zw008/VMware-Storage) (iSCSI/vSAN), [vmware-vks](https://github.com/zw008/VMware-VKS) (Tanzu Kubernetes), [vmware-nsx](https://github.com/zw008/VMware-NSX) (NSX networking), [vmware-nsx-security](https://github.com/zw008/VMware-NSX-Security) (DFW/firewall), [vmware-aria](https://github.com/zw008/VMware-Aria) (metrics/alerts/capacity), [vmware-avi](https://github.com/zw008/VMware-AVI) (AVI/ALB/AKO).
+> **Family**: [vmware-aiops](https://github.com/vmware-skills/VMware-AIops) (VM lifecycle), [vmware-monitor](https://github.com/vmware-skills/VMware-Monitor) (read-only monitoring), [vmware-storage](https://github.com/vmware-skills/VMware-Storage) (iSCSI/vSAN), [vmware-vks](https://github.com/vmware-skills/VMware-VKS) (Tanzu Kubernetes), [vmware-nsx](https://github.com/vmware-skills/VMware-NSX) (NSX networking), [vmware-nsx-security](https://github.com/vmware-skills/VMware-NSX-Security) (DFW/firewall), [vmware-aria](https://github.com/vmware-skills/VMware-Aria) (metrics/alerts/capacity), [vmware-avi](https://github.com/vmware-skills/VMware-AVI) (AVI/ALB/AKO).
 > | [vmware-pilot](../vmware-pilot/SKILL.md) (workflow orchestration)
 
 ## What This Skill Does
@@ -206,7 +206,7 @@ mkdir -p ~/.vmware
 
 ## Security
 
-- **Source Code**: [github.com/zw008/VMware-Policy](https://github.com/zw008/VMware-Policy)
+- **Source Code**: [github.com/vmware-skills/VMware-Policy](https://github.com/vmware-skills/VMware-Policy)
 - **Config File Contents**: `~/.vmware/rules.yaml` contains only rule definitions, no credentials
 - **Webhook Data Scope**: N/A -- vmware-policy does not send data externally
 - **TLS Verification**: N/A -- vmware-policy does not make network connections
@@ -215,4 +215,4 @@ mkdir -p ~/.vmware
 
 ## License
 
-MIT -- [github.com/zw008/VMware-Policy](https://github.com/zw008/VMware-Policy)
+MIT -- [github.com/vmware-skills/VMware-Policy](https://github.com/vmware-skills/VMware-Policy)
