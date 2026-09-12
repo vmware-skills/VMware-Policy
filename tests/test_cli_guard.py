@@ -178,3 +178,40 @@ def test_surface_symmetry_with_vmware_tool(monkeypatch):
 
     assert seen[0][0] == seen[1][0], "params bound differently across surfaces"
     assert seen[0][1] == seen[1][1] == "prod", "target resolved differently"
+
+
+def test_config_option_reaches_the_environment_resolver(captured, monkeypatch):
+    """A CLI command pointed at another file with --config must be judged by that
+    file's environment labels. The resolver reads VMWARE_<SKILL>_CONFIG on every
+    call; @guarded never passed the command's --config along, so a production
+    target in `--config prod.yaml` matched no environment rule (review,
+    2026-09-11). The override lasts for the guard() call only."""
+    import os
+
+    seen: dict = {}
+
+    def fake_guard(skill, tool, params=None, *, risk_level="low", target=""):
+        var = f"VMWARE_{skill.upper().replace('-', '_')}_CONFIG"
+        seen["skill"], seen["value"] = skill, os.environ.get(var)
+        return PolicyResult(allowed=True)
+
+    monkeypatch.setattr(cli_guard, "guard", fake_guard)
+
+    @cli_guard.guarded(risk_level="high")
+    def vm_delete(vm_name, target=None, config=None):
+        return "deleted"
+
+    var_for = lambda: f"VMWARE_{seen['skill'].upper().replace('-', '_')}_CONFIG"  # noqa: E731
+    vm_delete("web-01", target="prod", config="/etc/vmware/prod.yaml")
+    assert seen["value"] == "/etc/vmware/prod.yaml"
+    assert var_for() not in os.environ, "the override leaked past the call"
+
+    monkeypatch.setenv(var_for(), "/home/me/default.yaml")
+    vm_delete("web-01", target="prod", config=None)
+    assert seen["value"] == "/home/me/default.yaml", (
+        "no --config must leave the operator's variable alone"
+    )
+    vm_delete("web-01", target="prod", config="/etc/vmware/prod.yaml")
+    assert os.environ[var_for()] == "/home/me/default.yaml", (
+        "the operator's own value was not restored"
+    )

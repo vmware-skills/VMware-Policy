@@ -596,11 +596,12 @@ _REDACTED_KEY = "[redacted: credential-shaped key]"
 #: failure. A new tool returning ``{"kubeconfig": ...}`` or ``{"token": ...}``
 #: is therefore safe before anyone has thought about it.
 #:
-#: Matching is an EXACT (case-insensitive, ``-``/``_`` folded) key comparison,
-#: not a substring search: ``token_count`` and ``secret_manager_url`` are not
-#: credentials, and a check whose name promises more than it verifies is its own
-#: recurring defect (形态 #4). A credential under a key not listed here — say
-#: ``avi_password`` — is exactly what ``sensitive_result=True`` is for.
+#: Matching is an EXACT (case-insensitive, ``-``/``_`` folded) key comparison
+#: against this set, plus the ``_<word>`` tails in :data:`_CREDENTIAL_TAILS`
+#: below — never a substring search: ``token_count`` and ``secret_manager_url``
+#: are not credentials, and a check whose name promises more than it verifies is
+#: its own recurring defect (形态 #4). A credential under a key matching neither
+#: — say ``avi_secret_blob`` — is exactly what ``sensitive_result=True`` is for.
 _CREDENTIAL_KEYS = frozenset(
     {
         "access_token",
@@ -629,8 +630,44 @@ _CREDENTIAL_KEYS = frozenset(
 )
 
 
+#: Values that are already a redaction marker — left as they are, so applying
+#: the net twice (once by a caller, once by audit_call) changes nothing.
+_ALREADY_REDACTED = frozenset({"***", _REDACTED_KEY, _REDACTED_DECLARED})
+
+
+#: Credential words that also count as the *tail* of a longer name —
+#: ``vc_password``, ``new_password``, ``client_api_key``. Only after a ``_``, so
+#: ``token_count`` and ``secret_manager_url`` (the word is not the tail) stay
+#: readable. A probe filed ``vc_password`` in plain text before this existed.
+_CREDENTIAL_TAILS = (
+    "password", "passwd", "pwd", "token", "secret", "api_key", "apikey",
+    "private_key", "credential", "credentials", "kubeconfig",
+)
+
+
 def _is_credential_key(key: Any) -> bool:
-    return str(key).strip().lower().replace("-", "_") in _CREDENTIAL_KEYS
+    name = str(key).strip().lower().replace("-", "_")
+    return name in _CREDENTIAL_KEYS or any(name.endswith("_" + t) for t in _CREDENTIAL_TAILS)
+
+
+def _scrub_text_values(value: Any) -> Any:
+    """Run the free-form credential scrubber over every string in ``value``.
+
+    For parameters: a credential inside free text — ``arguments="mysql
+    --password=..."`` — is under no credential-shaped key, so the key net cannot
+    see it. Returns the same object when nothing changed.
+    """
+    if isinstance(value, str):
+        return _redact_secrets_text(value)
+    if isinstance(value, dict):
+        out = {k: _scrub_text_values(v) for k, v in value.items()}
+        return value if all(out[k] is value[k] for k in value) else out
+    if isinstance(value, (list, tuple)):
+        items = [_scrub_text_values(v) for v in value]
+        if all(a is b for a, b in zip(items, value)):
+            return value
+        return items if isinstance(value, list) else tuple(items)
+    return value
 
 
 def _redact_credential_keys(value: Any) -> Any:
@@ -645,7 +682,11 @@ def _redact_credential_keys(value: Any) -> Any:
         redacted: dict[Any, Any] = {}
         changed = False
         for key, item in value.items():
-            if _is_credential_key(key):
+            if _is_credential_key(key) and isinstance(item, str) and item in _ALREADY_REDACTED:
+                # Declared parameters are already "***" by the time audit_call
+                # applies this net to params; keep the declared marker.
+                redacted[key] = item
+            elif _is_credential_key(key):
                 redacted[key] = _REDACTED_KEY
                 changed = True
             else:

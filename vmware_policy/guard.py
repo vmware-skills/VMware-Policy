@@ -73,16 +73,25 @@ def audit_call(
     every surface (I-8). Never raises: ``AuditEngine.log`` swallows its own errors
     and degrades to a stderr warning, so audit failure cannot break the operation.
 
-    ``params``/``result`` are recorded as given — the caller sanitizes/redacts
-    first (``audit.py`` does not re-sanitize). ``agent`` defaults to the detected
-    caller. ``rationale``/``approved_by`` are self-attested audit enrichment, not
-    authorization (HLD §8.3).
+    The caller sanitizes and applies its declared redactions (``sensitive_params``,
+    ``sensitive_result``) first. The credential-key net is applied HERE, to both
+    ``params`` and ``result``, because this is the one place every surface
+    passes through: it used to run on results only, in each caller, so an
+    undeclared ``password`` argument was filed in plain text by both the MCP
+    and the CLI surface (found by probe, 2026-09-11). ``agent`` defaults to the
+    detected caller. ``rationale``/``approved_by`` are self-attested audit
+    enrichment, not authorization (HLD §8.3).
     """
+    # Imported here, not at module level: decorators imports this module.
+    from vmware_policy.decorators import _redact_credential_keys, _scrub_text_values
+
     get_engine().log(
         skill=skill,
         tool=tool,
-        params=params or {},
-        result=result,
+        # Key net first (whole values under credential-named keys), then the
+        # free-text scrubber over what is left (credentials inside strings).
+        params=_scrub_text_values(_redact_credential_keys(params or {})),
+        result=_redact_credential_keys(result),
         status=status,
         duration_ms=duration_ms,
         agent=agent if agent is not None else detect_agent(),

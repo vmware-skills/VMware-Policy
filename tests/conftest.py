@@ -8,12 +8,29 @@ another and false-trip the runaway guard.
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
-import pytest
+# Session-wide sandbox, installed at import time — before vmware_policy is
+# imported below — so no test can write the operator's real ~/.vmware/audit.db
+# or the policy/budget/undo state beside it. OPS_HOME moves that folder; HOME
+# moves anything resolved from "~". Added 2026-09-11, when VMware-VDI's suite
+# was found writing real audit rows because it had no such sandbox; this suite
+# had none either (scripts/lib/tests_are_sandboxed.py now requires it).
+REAL_HOME = Path(os.path.expanduser("~"))
+SANDBOX_HOME = Path(tempfile.mkdtemp(prefix="vmware-policy-tests-"))
+os.environ["HOME"] = str(SANDBOX_HOME)
+os.environ["OPS_HOME"] = str(SANDBOX_HOME / ".vmware")
+os.environ["USERPROFILE"] = str(SANDBOX_HOME)
+atexit.register(shutil.rmtree, SANDBOX_HOME, True)
 
-import vmware_policy.budget as budget_mod
-import vmware_policy.undo as undo_mod
+import pytest  # noqa: E402
+
+import vmware_policy.budget as budget_mod  # noqa: E402
+import vmware_policy.undo as undo_mod  # noqa: E402
 
 _BUDGET_ENV = (
     "VMWARE_MAX_TOOL_CALLS",

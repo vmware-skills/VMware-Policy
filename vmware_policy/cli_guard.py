@@ -23,6 +23,7 @@ from __future__ import annotations
 import inspect
 import os
 import time
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any, Callable
 
@@ -32,6 +33,7 @@ from vmware_policy.decorators import (
     _infer_skill,
     _redact,
     _redact_credential_keys,
+    _redact_secrets_text,
 )
 from vmware_policy.guard import audit_call, guard
 from vmware_policy.policy import PolicyDenied
@@ -51,6 +53,33 @@ try:  # pragma: no cover - exercised via the CLI, not the MCP path
 except ImportError:  # pragma: no cover
     _ABORT = ()
     _EXIT = ()
+
+
+@contextmanager
+def _config_override(skill: str, config: Any):
+    """Point the skill's environment resolver at the command's ``--config``.
+
+    Every skill's resolver reads ``VMWARE_<SKILL>_CONFIG`` (falling back to its
+    default file) on each call. A CLI command run with ``--config other.yaml``
+    acts on that file's targets, so its environment labels are the ones a deny
+    rule must see; without this the resolver judged the default file instead and
+    a production target in ``--config prod.yaml`` matched no environment rule
+    (review, 2026-09-11). Scoped to the guard() call; the previous value, or its
+    absence, is restored.
+    """
+    if not config:
+        yield
+        return
+    var = f"VMWARE_{skill.upper().replace('-', '_')}_CONFIG"
+    previous = os.environ.get(var)
+    os.environ[var] = str(config)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = previous
 
 
 def guarded(
@@ -94,10 +123,16 @@ def guarded(
             start = time.time()
             status = "ok"
             result: Any = None
+            bypassed = False
             try:
                 # Same authorization gate as @vmware_tool (I-3). A no-op unless the
                 # operator wrote deny / maintenance rules; raises PolicyDenied.
-                guard(skill, tool_name, safe, risk_level=risk_level, target=target)
+                with _config_override(skill, params.get("config")):
+                    decision = guard(skill, tool_name, safe, risk_level=risk_level, target=target)
+                # VMWARE_POLICY_DISABLED=1 must show in the row, as it does on the
+                # MCP surface — a bypassed write recorded as plain "ok" is
+                # indistinguishable from a normal one.
+                bypassed = getattr(decision, "rule", "") == "policy_disabled"
                 result = func(*args, **kwargs)
                 return result
             except PolicyDenied as exc:
@@ -116,7 +151,8 @@ def guarded(
                 raise
             except Exception as exc:
                 status = "error"
-                result = {"error": sanitize(str(exc), 500)}
+                # The same free-form credential scrubber the MCP surface runs.
+                result = {"error": sanitize(_redact_secrets_text(str(exc)), 500)}
                 raise
             finally:
                 # One audit row per invocation, to the single sink (I-8). Never
@@ -133,7 +169,7 @@ def guarded(
                     # credential, not before.
                     params=safe,
                     result=_redact_credential_keys(result),
-                    status=status,
+                    status=f"{status}_bypassed" if bypassed else status,
                     duration_ms=int((time.time() - start) * 1000),
                     agent=detect_agent(),
                     risk_level=risk_level,

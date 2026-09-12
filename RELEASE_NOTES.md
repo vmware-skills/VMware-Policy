@@ -1,3 +1,37 @@
+## v1.13.1 — credentials no longer reach the audit database by any of four paths
+
+A probe filed `"password": "hunter2"` in an audit row. The credential-key net ran on
+*results* only; *parameters* were redacted only when a tool listed them in `sensitive_params`.
+`audit_call` — the one writer every surface goes through — now applies it to parameters too,
+matches credential words as the tail of a name (`vc_password`, `new_password`; `token_count` stays
+readable), and runs the free-text scrubber over string parameters
+(`arguments="mysql --password=…"`).
+
+The CLI surface had fallen behind the MCP one: a `VMWARE_POLICY_DISABLED=1` CLI write was recorded
+as plain `ok` (now `ok_bypassed`, as on MCP), and CLI error text skipped the credential scrubber.
+
+**Environment rules follow the CLI's `--config`.** A command run with `--config prod.yaml` was
+judged by the default config's labels, so a production target there matched no environment rule.
+`@guarded` now points the skill's resolver at the command's config for the authorisation call.
+
+The setup guide still described behaviour removed releases ago: that a missing PyYAML makes the
+engine "silently allow all operations" (a decorated call now fails instead of running), and it
+never mentioned that an unreadable rules file denies every operation. It now documents the four
+rule sources. One part of the old text was and still is true: with no `~/.vmware/rules.yaml` the
+packaged baseline applies, and it denies nothing — every operation is allowed by policy.
+
+**OpenClaw could not show this skill to the model.** `metadata.openclaw.requires.config`
+listed a *file path* (`~/.vmware/rules.yaml`), which OpenClaw reads as an `openclaw.json` key that
+must be truthy — so the skill was "needs setup / not visible to the model" whatever was on disk
+(verified on OpenClaw 2026.6.35). The rules file is optional anyway: without one the packaged
+baseline applies. `requires.bins` also demanded `vmware-audit`, which a plugin install (uvx) never
+puts on PATH. There was no `requires.env`. `requires` is now `anyBins: ["vmware-audit", "uvx"]`;
+`optional.env` is unchanged.
+
+**Install commands in the skill pin this release.** ClawHub reviews SKILL.md and references/,
+not the package they install, so an unpinned `uv tool install` vouched for code nobody reviewed.
+Every install command for this package in the skill now names this version.
+
 ## v1.13.0 — a version floor that says which of three things happened
 
 `vmware_policy.compat` explains a 404 from a call that only exists on a newer
