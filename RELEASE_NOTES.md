@@ -1,4 +1,4 @@
-## Unreleased
+## v1.14.0 — a dry run is audited as a dry run
 
 **A dry run is audited as `dry_run`, not `ok`.** `--dry-run` maintenance windows and alert notes
 sat in an operator's audit trail as plain `ok` — nine rows on the lab, 2026-09-14 — because the

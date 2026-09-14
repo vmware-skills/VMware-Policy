@@ -38,7 +38,7 @@ Unified audit logging, policy enforcement, and input sanitization -- the infrast
 ## Quick Install
 
 ```bash
-uv tool install vmware-policy==1.13.1
+uv tool install vmware-policy==1.14.0
 vmware-audit stats          # verify installation
 ```
 
@@ -215,7 +215,7 @@ Multiple concurrent skill processes can write to the same audit.db via WAL mode.
 ## Setup
 
 ```bash
-uv tool install vmware-policy==1.13.1
+uv tool install vmware-policy==1.14.0
 mkdir -p ~/.vmware
 ```
 
