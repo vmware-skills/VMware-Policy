@@ -1,3 +1,15 @@
+## Unreleased
+
+**A dry run is audited as `dry_run`, not `ok`.** `--dry-run` maintenance windows and alert notes
+sat in an operator's audit trail as plain `ok` — nine rows on the lab, 2026-09-14 — because the
+only trace of the preview was `"dry_run": true` inside the params JSON, which `vmware-audit log`
+does not show. The trail read as windows opened and notes posted that never existed. Both
+enforcement surfaces (`@vmware_tool` for MCP, `@guarded` for the CLI) now record a call that
+completed with `dry_run=True` as `dry_run` (`dry_run_bypassed` when the policy was disabled). A dry
+run that fails is still `error`, and a dry run records no undo token, since it changed nothing.
+`vmware-audit log --status dry_run` filters them. Rows written before this release are left as they
+were.
+
 ## v1.13.1 — credentials no longer reach the audit database by any of four paths
 
 A probe filed `"password": "hunter2"` in an audit row. The credential-key net ran on

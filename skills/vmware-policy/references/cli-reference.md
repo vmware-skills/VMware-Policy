@@ -101,7 +101,7 @@ vmware-audit stats --days 1
 
 **Output sections**:
 - Total operations count
-- Breakdown by status (ok, denied, error)
+- Breakdown by status (ok, dry_run, denied, rejected, error, ...)
 - Breakdown by skill (sorted by count descending)
 
 ### vmware-audit policy

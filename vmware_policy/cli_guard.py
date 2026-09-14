@@ -34,6 +34,7 @@ from vmware_policy.decorators import (
     _redact,
     _redact_credential_keys,
     _redact_secrets_text,
+    audited_status,
 )
 from vmware_policy.guard import audit_call, guard
 from vmware_policy.policy import PolicyDenied
@@ -169,7 +170,8 @@ def guarded(
                     # credential, not before.
                     params=safe,
                     result=_redact_credential_keys(result),
-                    status=f"{status}_bypassed" if bypassed else status,
+                    # A completed --dry-run records "dry_run", not "ok".
+                    status=audited_status(status, params, bypassed=bypassed),
                     duration_ms=int((time.time() - start) * 1000),
                     agent=detect_agent(),
                     risk_level=risk_level,

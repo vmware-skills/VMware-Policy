@@ -56,7 +56,9 @@ def log(
     last: int = typer.Option(20, help="Number of recent entries to show"),
     skill: str | None = typer.Option(None, help="Filter by skill name"),
     tool: str | None = typer.Option(None, help="Filter by tool name"),
-    status: str | None = typer.Option(None, help="Filter by status (ok/denied/error)"),
+    status: str | None = typer.Option(
+        None, help="Filter by status (ok/dry_run/denied/rejected/error)"
+    ),
     workflow_id: str | None = typer.Option(None, "--workflow-id", help="Filter by workflow ID"),
     since: str | None = typer.Option(None, help="Show entries after date (ISO format)"),
 ) -> None:
@@ -86,7 +88,10 @@ def log(
     for row in reversed(rows):  # oldest first
         ts = row["ts"][:19].replace("T", " ")
         st = row["status"]
-        style = "red" if "denied" in st or "error" in st else ""
+        if "denied" in st or "error" in st:
+            style = "red"
+        else:
+            style = "dim" if st.startswith("dry_run") else ""
         table.add_row(
             ts,
             row["skill"],

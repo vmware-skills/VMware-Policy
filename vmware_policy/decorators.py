@@ -434,6 +434,27 @@ def _annotate_result(state: _CallState, result: Any) -> Any:
     return result
 
 
+def _is_dry_run(params: dict[str, Any]) -> bool:
+    """True when the call was a preview: its ``dry_run`` parameter is literally True.
+
+    A dry run changes nothing, so it is audited as ``dry_run`` rather than ``ok``
+    and records no undo token. Found 2026-09-14: nine ``--dry-run`` maintenance
+    and alert-note calls sat in an operator's audit trail as plain ``ok``, which
+    reads as windows opened and notes posted that never existed.
+    """
+    return params.get("dry_run") is True
+
+
+def audited_status(status: str, params: dict[str, Any], *, bypassed: bool = False) -> str:
+    """The status an audit row records for a call that ended in ``status``.
+
+    One place for both surfaces (``@vmware_tool`` and ``@guarded``): a completed
+    dry run becomes ``dry_run``, and a policy bypass appends ``_bypassed``.
+    """
+    recorded = "dry_run" if status == "ok" and _is_dry_run(params) else status
+    return f"{recorded}_bypassed" if bypassed else recorded
+
+
 def _record_undo(state: _CallState, result: Any) -> None:
     """Compute and persist the inverse descriptor for a successful write.
 
@@ -444,7 +465,7 @@ def _record_undo(state: _CallState, result: Any) -> None:
     change happened and can be reversed, and offering to reverse a write that
     never landed is worse than offering nothing.
     """
-    if state.undo is None or state.status != "ok":
+    if state.undo is None or state.status != "ok" or _is_dry_run(state.safe_params):
         return
     try:
         descriptor = state.undo(state.safe_params, result)
@@ -500,8 +521,8 @@ def _finalize(state: _CallState) -> None:
             state.timeout_seconds,
         )
 
-    bypassed = state.policy_result and state.policy_result.rule == "policy_disabled"
-    final_status = f"{state.status}_bypassed" if bypassed else state.status
+    bypassed = bool(state.policy_result and state.policy_result.rule == "policy_disabled")
+    final_status = audited_status(state.status, state.safe_params, bypassed=bypassed)
 
     # Update circuit-breaker state for armed patterns
     if state.pattern_match and state.pattern_match.armed:
