@@ -1,3 +1,27 @@
+## v1.15.0 — CLI reads are audited; every CLI command declares its kind
+
+**`@audited(tool=…)` for CLI commands that read a remote system or send data out.** No CLI read wrote
+`~/.vmware/audit.db`: on a live Aria, `vmware-aria resource list` left the Aria row count at 86 while the same
+read over MCP made it 87. `@audited` is the read counterpart of `@guarded` — the same `guard()` as the MCP read
+tools (a deny rule on `list_resources` now stops `resource list` too) and one row with a truthful status
+(`ok` / `error` / `denied`, a Typer exit recorded by its code) — without the confirmation layer. `tool` should
+be the MCP twin's name so one rule and one audit query cover both surfaces; it defaults to the function name.
+It marks the command `_is_audited`, never `_is_guarded`, so guarded-writes checks do not mistake a read for a
+write. `@guarded` and `@audited` share one wrapper.
+
+**`@cli_local(reason)` for CLI commands that reach nothing remote** — setup, version, local files, starting the
+MCP server. It writes no row and requires a non-empty reason, so an exemption is a decision in the code.
+Together with `@guarded` and `@audited` it lets every CLI command declare its kind (HLD I-9).
+
+**The "declares no environment label" warning fires only when an environment-scoped deny rule exists.** guard()
+resolves the target's environment on every call and logged that warning once per process for an unlabelled
+target. A CLI command is one process, so with every CLI read going through guard() it would have printed on
+nearly every command for users with no such rule — the case the message itself calls harmless. A resolver that
+raises is still reported.
+
+HLD §4.1, §8.1, I-8 (now "every call that reaches a remote system or sends data out") and I-9 are amended to
+match.
+
 ## v1.14.0 — a dry run is audited as a dry run
 
 **A dry run is audited as `dry_run`, not `ok`.** `--dry-run` maintenance windows and alert notes

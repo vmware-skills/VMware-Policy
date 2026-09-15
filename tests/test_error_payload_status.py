@@ -290,6 +290,11 @@ def test_a_precheck_denial_records_denied_and_never_runs_the_body(audited, monke
     ran = []
 
     class _DenyingEngine:
+        # guard() asks the engine whether any rule is scoped by environment
+        # before resolving the target's label (v1.15.0); a double must answer it.
+        def has_environment_scoped_rules(self):
+            return False
+
         def check_allowed(self, *a, **kw):
             return SimpleNamespace(
                 allowed=False, reason="denied by rule prod-freeze", rule="prod-freeze"

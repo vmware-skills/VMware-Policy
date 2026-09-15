@@ -47,8 +47,14 @@ def guard(
     (``resolve_environment``'s documented contract, and what ``@vmware_tool`` did
     at HEAD via ``self.env = resolve_environment(self.target)``).
     """
-    env = resolve_environment(target, skill=skill)
-    result = get_policy_engine().check_allowed(
+    engine = get_policy_engine()
+    # A missing environment label only matters when some deny rule is scoped by
+    # environment; without one, warning on every unlabelled call — every CLI read
+    # since HLD I-8 was amended — would be noise the message itself calls harmless.
+    env = resolve_environment(
+        target, skill=skill, warn_unlabeled=engine.has_environment_scoped_rules()
+    )
+    result = engine.check_allowed(
         tool, env=env, risk_level=risk_level, params=params or {}
     )
     if not result.allowed:

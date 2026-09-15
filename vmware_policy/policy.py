@@ -244,6 +244,21 @@ class PolicyEngine:
         except Exception:
             _log.warning("Failed to check policy rules file: %s", self._path, exc_info=True)
 
+    def has_environment_scoped_rules(self) -> bool:
+        """Whether any deny rule is scoped by ``environments``.
+
+        guard() uses this to decide whether an unlabelled target is worth a
+        warning: without such a rule the label changes nothing, which is what
+        the warning itself says. An engine whose rules failed to load answers
+        True — every check is failing closed and the operator should hear about
+        anything that looks wrong.
+        """
+        self._maybe_reload()
+        if self._load_error is not None:
+            return True
+        deny = self._rules.get("deny") or []
+        return any(isinstance(rule, dict) and rule.get("environments") for rule in deny)
+
     def check_allowed(
         self,
         operation: str,

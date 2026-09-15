@@ -104,7 +104,9 @@ def set_environment_resolver(
         _warned.clear()
 
 
-def resolve_environment(target: str, skill: Optional[str] = None) -> str:
+def resolve_environment(
+    target: str, skill: Optional[str] = None, *, warn_unlabeled: bool = True
+) -> str:
     """Return the environment ``target`` declares, or ``""`` if it declares none.
 
     An empty ``target`` is passed to the resolver rather than short-circuited:
@@ -117,6 +119,10 @@ def resolve_environment(target: str, skill: Optional[str] = None) -> str:
     Never raises. Every failure path answers ``""`` so the caller's fail-closed
     policy decides what that means, rather than an exception escaping into a
     tool call.
+
+    ``warn_unlabeled=False`` silences the two "no label" warnings — guard() passes
+    it when no deny rule is scoped by environment, where a missing label changes
+    nothing. A resolver that raises is reported either way.
     """
     resolver = _resolvers.get(skill) if skill else None
     if resolver is None:
@@ -126,6 +132,8 @@ def resolve_environment(target: str, skill: Optional[str] = None) -> str:
         # reads as unlabeled, which is the documented no-label behaviour.
         resolver = _resolver
     if resolver is None:
+        if not warn_unlabeled:
+            return ""
         _warn_once(
             target,
             "No environment resolver registered — targets read as unlabeled, so "
@@ -142,6 +150,8 @@ def resolve_environment(target: str, skill: Optional[str] = None) -> str:
         return ""
 
     if not declared or not str(declared).strip():
+        if not warn_unlabeled:
+            return ""
         _warn_once(
             target,
             f"Target {target!r} declares no environment label, so any "

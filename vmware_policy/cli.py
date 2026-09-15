@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from vmware_policy.audit import get_engine
+from vmware_policy import cli_local
 
 
 def _harden_console_encoding() -> None:
@@ -52,6 +53,7 @@ console = Console()
 
 
 @app.command()
+@cli_local("reads the local audit database")
 def log(
     last: int = typer.Option(20, help="Number of recent entries to show"),
     skill: str | None = typer.Option(None, help="Filter by skill name"),
@@ -105,6 +107,7 @@ def log(
 
 
 @app.command()
+@cli_local("exports rows from the local audit database")
 def export(
     format: str = typer.Option("json", help="Export format: json"),
     skill: str | None = typer.Option(None, help="Filter by skill"),
@@ -119,6 +122,7 @@ def export(
 
 
 @app.command()
+@cli_local("summarises the local audit database")
 def stats(
     days: int = typer.Option(7, help="Number of days to analyze"),
 ) -> None:
@@ -144,6 +148,7 @@ def stats(
 
 
 @app.command("undo-list")
+@cli_local("lists undo tokens in the local store")
 def undo_list(
     status: str | None = typer.Option(None, help="Filter by status (recorded/applied/expired)"),
     last: int = typer.Option(20, help="Number of recent undo records to show"),
@@ -173,6 +178,7 @@ def undo_list(
 
 
 @app.command("undo-show")
+@cli_local("shows one undo token from the local store")
 def undo_show(undo_id: str) -> None:
     """Show the exact inverse operation recorded for an undo token.
 
@@ -200,6 +206,7 @@ def undo_show(undo_id: str) -> None:
 
 
 @app.command()
+@cli_local("prints the local policy rules")
 def policy(
     operation: str = typer.Option(
         "", "--operation", "-o", help="Tool name to explain, e.g. vm_delete."
