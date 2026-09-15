@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -78,13 +79,47 @@ class AuditEngine:
         else:
             self._path = _DEFAULT_DB or ops_path("audit.db")
         self._ok = False
+        #: Rows this process could not write. Every loss also prints one line to
+        #: stderr (HLD §8.1: "availability, not silent loss").
+        self.lost_rows = 0
+        self._last_init_error = ""
+        if not self._try_init():
+            _log.warning("Cannot initialize audit DB at %s: %s", self._path, self._last_init_error)
+
+    def _try_init(self) -> bool:
+        """Create the directory and schema. Retried on every write while it fails.
+
+        Until 2026-09-15 one failure here disabled the engine for the life of the
+        process: ``_ok`` stayed False and every later ``log()`` returned without a
+        word, so fixing the directory changed nothing until a restart.
+        """
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             self._init_db()
             self._harden_permissions()
             self._ok = True
-        except Exception:
-            _log.warning("Cannot initialize audit DB at %s", self._path, exc_info=True)
+        except Exception as exc:  # noqa: BLE001 — audit must never break the call
+            self._ok = False
+            self._last_init_error = f"{type(exc).__name__}: {exc}"
+        return self._ok
+
+    def _report_lost(self, skill: str, tool: str, status: str, reason: str) -> None:
+        """Say, every time, that a row was not written — and count it.
+
+        Written straight to stderr rather than through ``logging``: an MCP host or a
+        CLI with no logging configured shows stderr, and MCP's stdio protocol uses
+        stdout only. A 2026-09-15 survey found a lost row left one start-up warning
+        per process, or nothing at all.
+        """
+        self.lost_rows += 1
+        try:
+            sys.stderr.write(
+                f"vmware-policy: audit row lost — {skill}.{tool} status={status}: "
+                f"{reason[:300]} (audit db: {self._path})\n"
+            )
+            sys.stderr.flush()
+        except Exception:  # noqa: BLE001 — a closed stderr must not break the call
+            pass
 
     def _init_db(self) -> None:
         conn = self._connect()
@@ -152,7 +187,8 @@ class AuditEngine:
         *why* a change was made, *who* signed off, and the *approval tier* the
         policy engine assigned (none/confirm/dual/review).
         """
-        if not self._ok:
+        if not self._ok and not self._try_init():
+            self._report_lost(skill, tool, status, f"cannot initialise: {self._last_init_error}")
             return
         try:
             self._maybe_rotate()
@@ -179,8 +215,9 @@ class AuditEngine:
             conn.commit()
             conn.close()
             _log.debug("[AUDIT] %s.%s -> %s (%dms)", skill, tool, status, duration_ms)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — audit must never break the call
             _log.warning("Failed to write audit log", exc_info=True)
+            self._report_lost(skill, tool, status, f"write failed: {type(exc).__name__}: {exc}")
 
     # ── Rotation ──────────────────────────────────────────────────────
 

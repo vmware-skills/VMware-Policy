@@ -16,6 +16,7 @@ fix (`tests/test_failure_statuses.py`, 17 of 28 red), all green after; HLD §8.2
   `@guarded`/`@audited` command failed exactly as it marks an MCP tool, including one that then raises
   `typer.Exit(0)`. The signal is per invocation and never leaks into the next command.
 * `vmware-audit log --status` accepts `interrupted`, shown in yellow.
+* **A lost audit row is never silent.** When `~/.vmware/audit.db` could not be initialised, the engine used to disable itself for the life of the process after one start-up warning, and a failed insert left only a `logging` warning most hosts never show. Now every lost row prints one line to stderr (`vmware-policy: audit row lost — <skill>.<tool> status=<status>: <reason> (audit db: <path>)`), the engine retries initialisation on the next write, and `AuditEngine.lost_rows` counts losses in the process (`tests/test_audit_loss_visible.py`, 4 red before).
 
 ## v1.15.0 — CLI reads are audited; every CLI command declares its kind
 
