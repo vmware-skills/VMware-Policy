@@ -1,4 +1,4 @@
-## Unreleased — a failed call is never audited `ok`
+## v1.16.0 — a failed call is never audited `ok`
 
 A family survey on 2026-09-15 found failed calls recorded as `ok` on both surfaces. Reproduced here before the
 fix (`tests/test_failure_statuses.py`, 17 of 28 red), all green after; HLD §8.2 / I-5 extended.
