@@ -112,10 +112,33 @@ def _returned_failure(result: Any) -> bool:
     special-cased here.
     """
     if isinstance(result, dict):
-        return bool(result.get("error"))
+        return _says_it_failed(result)
     if isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict):
-        return bool(result[0].get("error"))
+        return _says_it_failed(result[0])
     return False
+
+
+def _says_it_failed(result: dict[str, Any]) -> bool:
+    """True if a result states, in its own words, that *this call* failed.
+
+    ``{"error": <truthy>}`` is the family's documented envelope. Three more shapes
+    were added 2026-09-15 (HLD §8.2 / I-5, extended) after a family survey found
+    them audited ``ok``: ``ok: false`` and ``success: false`` (vmware-aiops guest
+    steps, host network faults) and ``outcome: "failed"`` (vmware-pilot
+    workflows). Each is a literal ``False`` or ``"failed"``, never merely falsy —
+    ``{"ok": None}`` says nothing.
+
+    ``status`` is deliberately not read. ``{"status": "error"}`` is as often a
+    successful call reporting the state of a task or object it polled as it is a
+    failed call, and guessing wrong in either direction is the same lie. A tool
+    whose failure is only a status string calls :func:`report_tool_failure`.
+    """
+    return (
+        bool(result.get("error"))
+        or result.get("ok") is False
+        or result.get("success") is False
+        or result.get("outcome") == "failed"
+    )
 
 
 def vmware_tool(
@@ -202,6 +225,11 @@ def vmware_tool(
                 except Exception as exc:
                     _capture_error(state, exc)
                     raise
+                except BaseException as exc:
+                    # SystemExit / KeyboardInterrupt / a cancelled call: not an
+                    # Exception, and until 2026-09-15 recorded as "ok".
+                    _capture_abnormal_exit(state, exc)
+                    raise
                 finally:
                     _finalize(state)
                     _failure_signal.reset(token)
@@ -240,6 +268,11 @@ def vmware_tool(
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)
+                    raise
+                except BaseException as exc:
+                    # SystemExit / KeyboardInterrupt / a cancelled call: not an
+                    # Exception, and until 2026-09-15 recorded as "ok".
+                    _capture_abnormal_exit(state, exc)
                     raise
                 finally:
                     _finalize(state)
@@ -498,6 +531,27 @@ def _capture_error(state: _CallState, exc: Exception) -> None:
         "error": sanitize(_redact_secrets_text(str(exc)), 500),
         "traceback": sanitize(_redact_secrets_text(traceback.format_exc()[-500:]), 500),
     }
+
+
+def _capture_abnormal_exit(state: _CallState, exc: BaseException) -> None:
+    """Record a call that ended by a ``BaseException`` that is not an ``Exception``.
+
+    HLD §8.2 / I-5 (extended 2026-09-15): a call that did not return normally is
+    never ``ok``. ``SystemExit`` with a non-zero or message code is a failure the
+    code chose to signal — vmware-avi's ops raise ``SystemExit(1)`` for "not
+    found". ``SystemExit(0)`` / ``SystemExit(None)`` is a clean exit.
+    ``KeyboardInterrupt`` and ``asyncio.CancelledError`` (a client that gave up)
+    are ``interrupted``: a long write may still be running on the far side, so the
+    row must not claim either success or a plain failure.
+    """
+    if isinstance(exc, SystemExit):
+        if exc.code in (0, None):
+            return
+        state.status = "error"
+        state.result = {"error": sanitize(_redact_secrets_text(f"SystemExit({exc.code})"), 500)}
+        return
+    state.status = "interrupted"
+    state.result = {"error": f"call interrupted ({type(exc).__name__})"}
 
 
 def _finalize(state: _CallState) -> None:

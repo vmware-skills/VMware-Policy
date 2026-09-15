@@ -30,6 +30,7 @@ from typing import Any, Callable
 from vmware_policy.audit import detect_agent
 from vmware_policy.decorators import (
     _bind_params,
+    _failure_signal,
     _infer_skill,
     _redact,
     _redact_credential_keys,
@@ -199,6 +200,9 @@ def _enforced(
         status = "ok"
         result: Any = None
         bypassed = False
+        # Fresh failure signal per invocation, restored after the audit row:
+        # `report_tool_failure` marks THIS command failed, never the next one.
+        token = _failure_signal.set(None)
         try:
             # Same authorization gate as @vmware_tool (I-3). A no-op unless the
             # operator wrote deny / maintenance rules; raises PolicyDenied.
@@ -209,6 +213,13 @@ def _enforced(
             # indistinguishable from a normal one.
             bypassed = getattr(decision, "rule", "") == "policy_disabled"
             result = func(*args, **kwargs)
+            # A command that printed its failure and returned (VKS `tkc versions`,
+            # the AIops CLI twins) says so with report_tool_failure — HLD I-5,
+            # extended 2026-09-15. Without this the row read `ok`.
+            reported = _failure_signal.get()
+            if reported is not None:
+                status = "error"
+                result = {"error": sanitize(_redact_secrets_text(reported), 500)}
             return result
         except PolicyDenied as exc:
             status = "denied"
@@ -222,12 +233,28 @@ def _enforced(
         except _EXIT as exc:
             # typer.Exit(0) is a clean early return; a non-zero code is a
             # failure the command chose to signal itself.
-            status = "ok" if getattr(exc, "exit_code", 0) == 0 else "error"
+            failed = getattr(exc, "exit_code", 0) != 0 or _failure_signal.get() is not None
+            status = "error" if failed else "ok"
+            if _failure_signal.get() is not None:
+                result = {"error": sanitize(_redact_secrets_text(_failure_signal.get()), 500)}
             raise
         except Exception as exc:
             status = "error"
             # The same free-form credential scrubber the MCP surface runs.
             result = {"error": sanitize(_redact_secrets_text(str(exc)), 500)}
+            raise
+        except SystemExit as exc:
+            # Not an Exception, so it used to fall through as "ok". vmware-avi's
+            # ops raise SystemExit(1) for "not found"; doctor exits non-zero on
+            # a failed probe. A clean SystemExit(0) stays ok.
+            if exc.code not in (0, None):
+                status = "error"
+                result = {"error": sanitize(_redact_secrets_text(f"SystemExit({exc.code})"), 500)}
+            raise
+        except BaseException as exc:
+            # Ctrl+C mid-command: the remote side may still be working.
+            status = "interrupted"
+            result = {"error": f"command interrupted ({type(exc).__name__})"}
             raise
         finally:
             # One audit row per invocation, to the single sink (I-8). Never
@@ -252,6 +279,7 @@ def _enforced(
                 rationale=os.environ.get("VMWARE_AUDIT_RATIONALE", ""),
                 approved_by=os.environ.get("VMWARE_AUDIT_APPROVED_BY", ""),
             )
+            _failure_signal.reset(token)
 
     wrapper._enforced_tool = tool_name
     return wrapper

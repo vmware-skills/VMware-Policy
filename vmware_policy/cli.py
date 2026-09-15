@@ -59,7 +59,7 @@ def log(
     skill: str | None = typer.Option(None, help="Filter by skill name"),
     tool: str | None = typer.Option(None, help="Filter by tool name"),
     status: str | None = typer.Option(
-        None, help="Filter by status (ok/dry_run/denied/rejected/error)"
+        None, help="Filter by status (ok/dry_run/denied/rejected/error/interrupted)"
     ),
     workflow_id: str | None = typer.Option(None, "--workflow-id", help="Filter by workflow ID"),
     since: str | None = typer.Option(None, help="Show entries after date (ISO format)"),
@@ -92,6 +92,8 @@ def log(
         st = row["status"]
         if "denied" in st or "error" in st:
             style = "red"
+        elif st.startswith("interrupted"):
+            style = "yellow"
         else:
             style = "dim" if st.startswith("dry_run") else ""
         table.add_row(

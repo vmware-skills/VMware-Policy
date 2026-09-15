@@ -1,3 +1,22 @@
+## Unreleased — a failed call is never audited `ok`
+
+A family survey on 2026-09-15 found failed calls recorded as `ok` on both surfaces. Reproduced here before the
+fix (`tests/test_failure_statuses.py`, 17 of 28 red), all green after; HLD §8.2 / I-5 extended.
+
+* **Calls that do not return normally.** `@vmware_tool` and `@guarded`/`@audited` caught `Exception` only, so a
+  `SystemExit(2)` — which vmware-avi's ops raise for "not found" — or a Ctrl+C was filed `ok`. Now a non-zero or
+  message `SystemExit` is `error`; `KeyboardInterrupt` and a cancelled MCP call (`asyncio.CancelledError`) are
+  the new status `interrupted` (a long write the client gave up on may still be running). `SystemExit(0)` stays
+  `ok`. The exception still propagates.
+* **Results that say the call failed.** Besides `{"error": …}`, a result with `ok: false`, `success: false` or
+  `outcome: "failed"` (and a one-element list of such) is `error` — vmware-aiops guest steps and host network
+  faults, vmware-pilot workflows. `status` is still not read: `{"status": "error"}` is as often a successful poll
+  of a failed task. A literal `False` / `"failed"` only; `{"ok": None}` stays `ok`.
+* **CLI commands that print their failure and return.** `report_tool_failure(message)` now marks a
+  `@guarded`/`@audited` command failed exactly as it marks an MCP tool, including one that then raises
+  `typer.Exit(0)`. The signal is per invocation and never leaks into the next command.
+* `vmware-audit log --status` accepts `interrupted`, shown in yellow.
+
 ## v1.15.0 — CLI reads are audited; every CLI command declares its kind
 
 **`@audited(tool=…)` for CLI commands that read a remote system or send data out.** No CLI read wrote
