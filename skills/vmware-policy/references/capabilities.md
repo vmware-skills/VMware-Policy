@@ -154,7 +154,7 @@ Append-only audit logger backed by SQLite WAL.
 | `tool` | TEXT | Tool function name |
 | `params` | TEXT | JSON -- call parameters, with `sensitive_params` values stored as `***` |
 | `result` | TEXT | JSON -- operation result (or error text + traceback excerpt), after credential redaction |
-| `status` | TEXT | `ok`, `dry_run` (completed with `dry_run=True` — nothing changed), `denied`, `error`, `budget_exceeded`, `rejected`, or `<status>_bypassed` |
+| `status` | TEXT | `ok`, `dry_run` (completed with `dry_run=True` — nothing changed), `denied`, `error` (raised; returned `{"error": …}` or `outcome: "failed"`; non-zero `SystemExit` / Typer exit; `report_tool_failure`), `budget_exceeded`, `rejected` (CLI: confirmation declined), `interrupted` (Ctrl+C or a cancelled MCP call — the remote operation may still be running), or `<status>_bypassed` |
 | `duration_ms` | INTEGER | Execution time in milliseconds |
 | `agent` | TEXT | Detected AI agent |
 | `workflow_id` | TEXT | Workflow ID from vmware-pilot |

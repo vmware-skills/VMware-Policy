@@ -87,6 +87,13 @@ def audit_call(
     and the CLI surface (found by probe, 2026-09-11). ``agent`` defaults to the
     detected caller. ``rationale``/``approved_by`` are self-attested audit
     enrichment, not authorization (HLD §8.3).
+
+    The free-text scrubber runs over ``result`` too (review D3, 2026-09-15). A
+    result that quotes text it was handed — vmware-debug's ``incident_timeline``
+    returns event text as ``hypotheses[].sample_text`` — carries a credential
+    under no credential-shaped key, and a probe filed ``password=…`` and
+    ``https://user:pass@host`` from an event in plain text. A tool whose whole
+    result is sensitive still declares ``sensitive_result``; this is the net.
     """
     # Imported here, not at module level: decorators imports this module.
     from vmware_policy.decorators import _redact_credential_keys, _scrub_text_values
@@ -97,7 +104,7 @@ def audit_call(
         # Key net first (whole values under credential-named keys), then the
         # free-text scrubber over what is left (credentials inside strings).
         params=_scrub_text_values(_redact_credential_keys(params or {})),
-        result=_redact_credential_keys(result),
+        result=_scrub_text_values(_redact_credential_keys(result)),
         status=status,
         duration_ms=duration_ms,
         agent=agent if agent is not None else detect_agent(),

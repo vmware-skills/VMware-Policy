@@ -23,6 +23,7 @@ stop*: it forces the agent to break out of the loop rather than keep spending.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -199,14 +200,19 @@ class BudgetTracker:
 def _fingerprint(tool: str, params: dict | None) -> str:
     """Stable identity for a (tool, params) pair used by the runaway breaker.
 
-    Uses already-redacted params (secrets are '***'), so the fingerprint is
-    stable and safe. Falls back to repr on non-serializable values.
+    Takes the arguments the tool actually received and keeps only a SHA-256
+    digest of them. It used to key on the redacted copy written to the audit row,
+    where every ``sensitive_params`` value is ``***``, so calls that differed only
+    in a redacted argument were "identical" and the 26th was refused (review,
+    2026-09-15: vmware-debug ``incident_timeline`` with different events). A digest
+    never collides for different inputs and keeps neither the arguments nor a
+    secret in them in memory. Falls back to repr on non-serializable values.
     """
     try:
         body = json.dumps(params or {}, sort_keys=True, default=str)
     except Exception:  # noqa: BLE001 — fingerprint must never raise
         body = repr(params)
-    return f"{tool}|{body}"
+    return f"{tool}|{hashlib.sha256(body.encode('utf-8', 'replace')).hexdigest()}"
 
 
 # ── Singleton ──────────────────────────────────────────────────────────

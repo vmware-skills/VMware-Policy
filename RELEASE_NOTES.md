@@ -4,19 +4,47 @@ A family survey on 2026-09-15 found failed calls recorded as `ok` on both surfac
 fix (`tests/test_failure_statuses.py`, 17 of 28 red), all green after; HLD §8.2 / I-5 extended.
 
 * **Calls that do not return normally.** `@vmware_tool` and `@guarded`/`@audited` caught `Exception` only, so a
-  `SystemExit(2)` — which vmware-avi's ops raise for "not found" — or a Ctrl+C was filed `ok`. Now a non-zero or
+  `SystemExit(1)` — which vmware-avi's ops raise for "not found" — or a Ctrl+C was filed `ok`. Now a non-zero or
   message `SystemExit` is `error`; `KeyboardInterrupt` and a cancelled MCP call (`asyncio.CancelledError`) are
   the new status `interrupted` (a long write the client gave up on may still be running). `SystemExit(0)` stays
-  `ok`. The exception still propagates.
-* **Results that say the call failed.** Besides `{"error": …}`, a result with `ok: false`, `success: false` or
-  `outcome: "failed"` (and a one-element list of such) is `error` — vmware-aiops guest steps and host network
-  faults, vmware-pilot workflows. `status` is still not read: `{"status": "error"}` is as often a successful poll
-  of a failed task. A literal `False` / `"failed"` only; `{"ok": None}` stays `ok`.
+  `ok`. The exception still propagates. An interrupted call is not reported to an armed pattern's circuit
+  breaker: a cancellation says nothing about whether the remediation works.
+* **Results that say the call failed.** Besides `{"error": …}`, a result with `outcome: "failed"` (vmware-pilot
+  workflows; also a one-element list of such) is `error`. `ok` and `success` are **not** read: no producer in the
+  family uses `ok: false` / `success: false` to mean "this call failed" without also carrying a truthy `error`,
+  and vmware-aiops `vmk_ping` returns `success: false` as its *answer* (host unreachable, or an esxcli fault such
+  as `Message too long` from an MTU probe) — reading it filed successful probes `error` and disagreed with AIops'
+  MCP frame detector, which reads `error` only. `status` is not read either: `{"status": "error"}` is as often a
+  successful poll of a failed task.
+* **Typer ≥0.26 exits are recognised.** The CLI decorators matched only `click.exceptions.Exit`/`Abort`. From
+  typer 0.26 `typer.Exit`/`typer.Abort` are typer's own classes, so in skills on typer 0.26+ (vmware-debug,
+  -log-insight, -privateai, -vdi) a clean `raise typer.Exit()` was filed `error` with `{"error": ""}` and a
+  declined `typer.confirm(abort=True)` was `error` instead of `rejected`. Both families are now matched (neither
+  becomes a dependency). A non-zero exit with no reported message records `{"error": "command exited with code
+  N"}` instead of an empty string.
 * **CLI commands that print their failure and return.** `report_tool_failure(message)` now marks a
   `@guarded`/`@audited` command failed exactly as it marks an MCP tool, including one that then raises
-  `typer.Exit(0)`. The signal is per invocation and never leaks into the next command.
-* `vmware-audit log --status` accepts `interrupted`, shown in yellow.
-* **A lost audit row is never silent.** When `~/.vmware/audit.db` could not be initialised, the engine used to disable itself for the life of the process after one start-up warning, and a failed insert left only a `logging` warning most hosts never show. Now every lost row prints one line to stderr (`vmware-policy: audit row lost — <skill>.<tool> status=<status>: <reason> (audit db: <path>)`), the engine retries initialisation on the next write, and `AuditEngine.lost_rows` counts losses in the process (`tests/test_audit_loss_visible.py`, 4 red before).
+  `typer.Exit(0)`. The signal is per invocation and never leaks into the next command — also when writing the
+  audit row raises, which used to skip the reset on both surfaces.
+* **Credentials inside a result's text are scrubbed.** `audit_call` ran the free-text credential scrubber over
+  arguments but only the key-name net over results, so a result quoting text it was handed kept what that text
+  carried: a vmware-debug probe with `password=…` and `https://user:pass@host` in an event filed both, from
+  `incident_timeline`'s `sample_text`, in plain text. The scrubber now runs over results on every surface; the
+  caller still receives the unmodified value.
+* **The runaway guard compares the real arguments.** It fingerprinted the redacted copy written to the audit row,
+  where every `sensitive_params` value is `***`, so calls that differed only in a redacted argument counted as
+  identical and the 26th inside 120 s was refused — vmware-debug's `incident_timeline` with different events hit it.
+  The fingerprint is now a SHA-256 digest of the arguments the tool received: different inputs never collide, and
+  neither the arguments nor a secret in them is kept in memory (`tests/test_runaway_guard_sees_raw_arguments.py`).
+* `vmware-audit log --status` accepts `interrupted`; `log` and `stats` both show it in yellow.
+* **A lost audit row is never silent.** When `~/.vmware/audit.db` could not be initialised, the engine used to
+  disable itself for the life of the process after one start-up warning, and a failed insert left only a
+  `logging` warning most hosts never show. Now every lost row prints one line to stderr (`vmware-policy: audit
+  row lost — <skill>.<tool> status=<status>: <reason> (audit db: <path>)`), with credentials scrubbed from the
+  reason, and `AuditEngine.lost_rows` counts losses in the process (thread-safe). The engine retries
+  initialisation on the next write — also after a failed *write*, so a database or directory deleted while the
+  process runs heals on the following call instead of failing with `no such table` until restart. The traceback
+  is logged at debug level only, not on every loss.
 
 ## v1.15.0 — CLI reads are audited; every CLI command declares its kind
 

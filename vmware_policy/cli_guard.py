@@ -41,20 +41,35 @@ from vmware_policy.guard import audit_call, guard
 from vmware_policy.policy import PolicyDenied
 from vmware_policy.sanitize import sanitize
 
-# ``@guarded`` only ever wraps a Typer command, so click (Typer's engine) is
-# present wherever it runs. Soft-import it anyway: vmware_policy is also a pure
-# MCP dependency, and importing click there must not become mandatory. An empty
-# tuple makes ``except ()`` a no-op, so the classification below degrades to
-# "any non-return exit is an error" when click is genuinely absent.
-try:  # pragma: no cover - exercised via the CLI, not the MCP path
-    from click.exceptions import Abort as _Abort
-    from click.exceptions import Exit as _Exit
 
-    _ABORT: tuple[type[BaseException], ...] = (_Abort,)
-    _EXIT: tuple[type[BaseException], ...] = (_Exit,)
-except ImportError:  # pragma: no cover
-    _ABORT = ()
-    _EXIT = ()
+def _cli_exception_classes(name: str) -> tuple[type[BaseException], ...]:
+    """Every distinct ``Exit``/``Abort`` class a Typer command can raise.
+
+    Both families, soft-imported so neither click nor typer becomes a hard
+    dependency of a package that is also a pure MCP dependency. On typer <0.26
+    ``typer.Exit`` *is* ``click.exceptions.Exit``; from 0.26 typer vendors click
+    and raises its own classes, which ``except click.exceptions.Exit`` does not
+    catch. Review D1 (2026-09-15): under typer 0.26.8 a clean ``raise
+    typer.Exit()`` was filed ``error`` with ``{"error": ""}`` and a declined
+    ``typer.confirm(abort=True)`` was ``error`` instead of ``rejected``, in
+    vmware-debug, -log-insight, -privateai and -vdi. An empty tuple makes
+    ``except ()`` a no-op, so with neither installed a non-return exit is an error.
+    """
+    import importlib
+
+    found: list[type[BaseException]] = []
+    for module in ("click.exceptions", "typer"):
+        try:
+            cls = getattr(importlib.import_module(module), name)
+        except (ImportError, AttributeError):  # pragma: no cover - depends on install
+            continue
+        if isinstance(cls, type) and issubclass(cls, BaseException) and cls not in found:
+            found.append(cls)
+    return tuple(found)
+
+
+_ABORT: tuple[type[BaseException], ...] = _cli_exception_classes("Abort")
+_EXIT: tuple[type[BaseException], ...] = _cli_exception_classes("Exit")
 
 
 @contextmanager
@@ -233,10 +248,15 @@ def _enforced(
         except _EXIT as exc:
             # typer.Exit(0) is a clean early return; a non-zero code is a
             # failure the command chose to signal itself.
-            failed = getattr(exc, "exit_code", 0) != 0 or _failure_signal.get() is not None
-            status = "error" if failed else "ok"
-            if _failure_signal.get() is not None:
-                result = {"error": sanitize(_redact_secrets_text(_failure_signal.get()), 500)}
+            code = getattr(exc, "exit_code", 0)
+            reported = _failure_signal.get()
+            status = "error" if code != 0 or reported is not None else "ok"
+            if reported is not None:
+                result = {"error": sanitize(_redact_secrets_text(reported), 500)}
+            elif code != 0:
+                # typer.Exit carries no message (it printed its own), so
+                # str(exc) is "" — record the one fact the row can state.
+                result = {"error": f"command exited with code {code}"}
             raise
         except Exception as exc:
             status = "error"
@@ -258,28 +278,31 @@ def _enforced(
             raise
         finally:
             # One audit row per invocation, to the single sink (I-8). Never
-            # raises — audit_call swallows its own errors.
-            audit_call(
-                skill,
-                tool_name,
-                # Same credential-key net as @vmware_tool: both surfaces
-                # write the one audit sink, so scrubbing only one of them
-                # would leave the leak reachable from the other (I-3/I-8,
-                # and CLAUDE.md 形态 #7). There is no ``sensitive_result``
-                # counterpart here because a Typer command returns None and
-                # prints instead — add one the day a CLI command returns a
-                # credential, not before.
-                params=safe,
-                result=_redact_credential_keys(result),
-                # A completed --dry-run records "dry_run", not "ok".
-                status=audited_status(status, params, bypassed=bypassed),
-                duration_ms=int((time.time() - start) * 1000),
-                agent=detect_agent(),
-                risk_level=risk_level,
-                rationale=os.environ.get("VMWARE_AUDIT_RATIONALE", ""),
-                approved_by=os.environ.get("VMWARE_AUDIT_APPROVED_BY", ""),
-            )
-            _failure_signal.reset(token)
+            # raises by contract — audit_call swallows its own errors — but the
+            # signal reset is nested so a leak cannot survive if it ever does.
+            try:
+                audit_call(
+                    skill,
+                    tool_name,
+                    # Same credential-key net as @vmware_tool: both surfaces
+                    # write the one audit sink, so scrubbing only one of them
+                    # would leave the leak reachable from the other (I-3/I-8,
+                    # and CLAUDE.md 形态 #7). There is no ``sensitive_result``
+                    # counterpart here because a Typer command returns None and
+                    # prints instead — add one the day a CLI command returns a
+                    # credential, not before.
+                    params=safe,
+                    result=_redact_credential_keys(result),
+                    # A completed --dry-run records "dry_run", not "ok".
+                    status=audited_status(status, params, bypassed=bypassed),
+                    duration_ms=int((time.time() - start) * 1000),
+                    agent=detect_agent(),
+                    risk_level=risk_level,
+                    rationale=os.environ.get("VMWARE_AUDIT_RATIONALE", ""),
+                    approved_by=os.environ.get("VMWARE_AUDIT_APPROVED_BY", ""),
+                )
+            finally:
+                _failure_signal.reset(token)
 
     wrapper._enforced_tool = tool_name
     return wrapper

@@ -121,24 +121,25 @@ def _returned_failure(result: Any) -> bool:
 def _says_it_failed(result: dict[str, Any]) -> bool:
     """True if a result states, in its own words, that *this call* failed.
 
-    ``{"error": <truthy>}`` is the family's documented envelope. Three more shapes
-    were added 2026-09-15 (HLD §8.2 / I-5, extended) after a family survey found
-    them audited ``ok``: ``ok: false`` and ``success: false`` (vmware-aiops guest
-    steps, host network faults) and ``outcome: "failed"`` (vmware-pilot
-    workflows). Each is a literal ``False`` or ``"failed"``, never merely falsy —
-    ``{"ok": None}`` says nothing.
+    Two shapes only: ``{"error": <truthy>}``, the family's documented envelope,
+    and ``outcome == "failed"`` (vmware-pilot workflows, added 2026-09-15 after a
+    family survey found them audited ``ok``; HLD §8.2 / I-5).
 
-    ``status`` is deliberately not read. ``{"status": "error"}`` is as often a
+    ``ok`` and ``success`` are deliberately not read (review decision D2, the
+    same day). No producer in the family uses ``ok: False`` / ``success: False``
+    to mean "this call failed" without also carrying a truthy ``error``, and one
+    uses ``success: False`` as the *answer*: vmware-aiops ``vmk_ping`` returns it
+    for an unreachable host or an esxcli fault, which for an MTU probe is the
+    result being asked for. Reading it filed those successful probes ``error``
+    and disagreed with AIops' MCP frame detector (``_is_error_envelope``), which
+    reads ``error`` only.
+
+    ``status`` is not read either. ``{"status": "error"}`` is as often a
     successful call reporting the state of a task or object it polled as it is a
     failed call, and guessing wrong in either direction is the same lie. A tool
     whose failure is only a status string calls :func:`report_tool_failure`.
     """
-    return (
-        bool(result.get("error"))
-        or result.get("ok") is False
-        or result.get("success") is False
-        or result.get("outcome") == "failed"
-    )
+    return bool(result.get("error")) or result.get("outcome") == "failed"
 
 
 def vmware_tool(
@@ -231,8 +232,12 @@ def vmware_tool(
                     _capture_abnormal_exit(state, exc)
                     raise
                 finally:
-                    _finalize(state)
-                    _failure_signal.reset(token)
+                    # Nested, so the signal is restored even if auditing raises:
+                    # a leaked binding would mark the next call on this task failed.
+                    try:
+                        _finalize(state)
+                    finally:
+                        _failure_signal.reset(token)
         else:
 
             @wraps(func)
@@ -275,8 +280,12 @@ def vmware_tool(
                     _capture_abnormal_exit(state, exc)
                     raise
                 finally:
-                    _finalize(state)
-                    _failure_signal.reset(token)
+                    # Nested, so the signal is restored even if auditing raises:
+                    # a leaked binding would mark the next call on this task failed.
+                    try:
+                        _finalize(state)
+                    finally:
+                        _failure_signal.reset(token)
 
         # ── Attach metadata for harness / introspection ───────────
         wrapper._is_vmware_tool = True
@@ -321,6 +330,7 @@ class _CallState:
         "approved_by",
         "undo",
         "sensitive_result",
+        "raw_params",
     )
 
     def __init__(
@@ -351,6 +361,9 @@ class _CallState:
         # Map positional args to parameter names so they appear in the audit
         # log and participate in env scoping (previously only kwargs did).
         params = _bind_params(signature, args, kwargs)
+        # The real arguments, for the runaway breaker's digest only (never
+        # audited, never logged); safe_params is what the audit row gets.
+        self.raw_params = params
         self.safe_params = _redact(params, sensitive)
         # Keep the target name: the pattern engine's rate limits and circuit
         # breakers are keyed per-TARGET (feeding them the environment pooled
@@ -426,7 +439,7 @@ def _pre_check(state: _CallState) -> None:
     # calls do not count. A trip raises BudgetExceeded (a hard stop); record the
     # denial on state so _finalize audits it.
     try:
-        get_budget().check_and_record(state.tool_name, state.safe_params)
+        get_budget().check_and_record(state.tool_name, state.raw_params)
     except BudgetExceeded as exc:
         state.status = "budget_exceeded"
         state.result = {"error": exc.reason, "rule": exc.rule}
@@ -578,8 +591,11 @@ def _finalize(state: _CallState) -> None:
     bypassed = bool(state.policy_result and state.policy_result.rule == "policy_disabled")
     final_status = audited_status(state.status, state.safe_params, bypassed=bypassed)
 
-    # Update circuit-breaker state for armed patterns
-    if state.pattern_match and state.pattern_match.armed:
+    # Update circuit-breaker state for armed patterns. An interrupted call is
+    # skipped: a user cancelling (or a client giving up) says nothing about
+    # whether the pattern works, and counting it as a failure could trip the
+    # breaker on a remediation that was succeeding.
+    if state.pattern_match and state.pattern_match.armed and state.status != "interrupted":
         try:
             get_pattern_engine().report_outcome(
                 pattern_id=state.pattern_match.pattern.pattern_id,

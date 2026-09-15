@@ -138,7 +138,14 @@ def stats(
     if data["by_status"]:
         console.print("\n  By status:")
         for st, count in sorted(data["by_status"].items()):
-            style = "red" if "denied" in st or "error" in st else "green"
+            if "denied" in st or "error" in st:
+                style = "red"
+            elif st.startswith("interrupted"):
+                # As in `log`: a cancelled call may still be running remotely,
+                # so it is neither a success nor a plain failure.
+                style = "yellow"
+            else:
+                style = "green"
             console.print(f"    [{style}]{st}[/{style}]: {count}")
 
     if data["by_skill"]:

@@ -129,10 +129,12 @@ List recorded undo tokens (`--status recorded|applied|expired`, `--last N`), or 
 | Status | Meaning |
 |--------|---------|
 | `ok` | Operation completed successfully |
+| `dry_run` | Completed with `dry_run=True` -- a preview; nothing changed |
 | `denied` | Blocked by policy (deny rule, closed/malformed maintenance window, or `rules_unreadable`) |
-| `error` | Operation raised, or returned the family's error payload |
-| `budget_exceeded` | Stopped by the `@vmware_tool` per-process call budget |
+| `error` | Operation raised; returned `{"error": ...}` or `outcome: "failed"`; exited with a non-zero `SystemExit` / Typer exit; or called `report_tool_failure`. `ok: false` / `success: false` alone are not read (vmware-aiops `vmk_ping` returns `success: false` as its answer) |
+| `budget_exceeded` | Stopped by the `@vmware_tool` per-process call budget or runaway guard |
 | `rejected` | CLI only: the operator declined the confirmation prompt |
+| `interrupted` | Ctrl+C, or an MCP call the client cancelled -- the remote operation may still be running (shown in yellow) |
 | `<status>_bypassed` | Call made with `VMWARE_POLICY_DISABLED=1`, from either the MCP (`@vmware_tool`) or the CLI (`@guarded`) surface (e.g. `ok_bypassed`, `error_bypassed`). |
 
 ## Environment Variables

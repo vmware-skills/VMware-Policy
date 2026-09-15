@@ -79,6 +79,8 @@ class AuditEngine:
         else:
             self._path = _DEFAULT_DB or ops_path("audit.db")
         self._ok = False
+        #: Guards ``lost_rows``: one MCP server can lose rows on several threads.
+        self._lost_lock = threading.Lock()
         #: Rows this process could not write. Every loss also prints one line to
         #: stderr (HLD §8.1: "availability, not silent loss").
         self.lost_rows = 0
@@ -111,8 +113,15 @@ class AuditEngine:
         stdout only. A 2026-09-15 survey found a lost row left one start-up warning
         per process, or nothing at all.
         """
-        self.lost_rows += 1
+        with self._lost_lock:
+            self.lost_rows += 1
         try:
+            # Imported here, not at module level: decorators imports this module.
+            from vmware_policy.decorators import _redact_secrets_text
+
+            # Exception text can quote a path or DSN with credentials in it; the
+            # same scrubber the audit row's error text gets.
+            reason = _redact_secrets_text(reason)
             sys.stderr.write(
                 f"vmware-policy: audit row lost — {skill}.{tool} status={status}: "
                 f"{reason[:300]} (audit db: {self._path})\n"
@@ -216,7 +225,13 @@ class AuditEngine:
             conn.close()
             _log.debug("[AUDIT] %s.%s -> %s (%dms)", skill, tool, status, duration_ms)
         except Exception as exc:  # noqa: BLE001 — audit must never break the call
-            _log.warning("Failed to write audit log", exc_info=True)
+            # Re-run initialisation on the next write. A database or directory
+            # deleted after a successful start otherwise failed every write with
+            # "no such table" for the life of the process (review D4, 2026-09-15).
+            self._ok = False
+            # The stderr line below is the report; the traceback is for debugging
+            # only — at warning level it printed on every lost row.
+            _log.debug("Failed to write audit log", exc_info=True)
             self._report_lost(skill, tool, status, f"write failed: {type(exc).__name__}: {exc}")
 
     # ── Rotation ──────────────────────────────────────────────────────
