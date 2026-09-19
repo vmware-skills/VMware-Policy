@@ -175,3 +175,17 @@ def test_a_nested_preview_word_is_not_a_preview(engine):
 
     listing("x")
     assert _statuses(engine) == ["ok"]
+
+
+@pytest.mark.unit
+def test_a_preview_from_a_sensitive_result_tool_is_recorded_as_dry_run(engine):
+    """``sensitive_result=True`` replaces the audited result with a sentinel, so
+    the preview must be recognised from the real result, not the audited one
+    (AVI ``ako_config_upgrade``, found in review 2026-09-19)."""
+    @vmware_tool(sensitive_result=True)
+    def upgrade(release: str, confirm: bool = False) -> dict:
+        return {"action": "preview"} if not confirm else {"action": "upgraded"}
+
+    upgrade("ako")
+    upgrade("ako", confirm=True)
+    assert _statuses(engine) == ["dry_run", "ok"]

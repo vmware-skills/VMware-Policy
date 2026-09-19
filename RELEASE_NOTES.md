@@ -7,7 +7,8 @@ answers `{"action": "preview", ...}` without changing anything. `@vmware_tool` r
 
 * A result whose **top-level** `action` is `"preview"` is now audited as `dry_run` and records no undo token.
   A listing whose rows mention "preview" is data and still records `ok`.
-* `audited_status()` takes an optional `result=`; the CLI surface (`@guarded`) is unchanged.
+* `audited_status()` takes an optional `previewed=`; the CLI surface (`@guarded`) is unchanged. The preview is
+  decided from the tool's real result, so a `sensitive_result=True` tool's preview is recognised too.
 * **Audit redaction no longer stalls on long text.** Five redaction rules began with an unanchored identifier
   prefix, so the engine retried a match at every character of an identifier: 2 000 characters of letters took
   0.2 s, 8 000 took 3.4 s, and a 50 000-character guest command held an MCP call for minutes inside the audit

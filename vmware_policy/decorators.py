@@ -331,6 +331,7 @@ class _CallState:
         "undo",
         "sensitive_result",
         "raw_params",
+        "previewed",
     )
 
     def __init__(
@@ -353,6 +354,8 @@ class _CallState:
         self.start = time.time()
         self.status = "ok"
         self.result: Any = None
+        # Decided from the real result: ``result`` may hold the redaction sentinel.
+        self.previewed = False
         self.policy_result: PolicyResult | None = None
         self.pattern_match: PatternMatch | None = None
         self.risk_level = risk_level
@@ -471,6 +474,7 @@ def _annotate_result(state: _CallState, result: Any) -> Any:
     still receives the real object, and ``_record_undo`` below still sees it.
     """
     state.result = _REDACTED_DECLARED if state.sensitive_result else result
+    state.previewed = _is_preview_result(result)
     if _returned_failure(result) or _failure_signal.get() is not None:
         state.status = "error"
     if state.pattern_match and state.pattern_match.armed and isinstance(result, dict):
@@ -502,14 +506,14 @@ def _is_preview_result(result: Any) -> bool:
 
 
 def audited_status(
-    status: str, params: dict[str, Any], *, bypassed: bool = False, result: Any = None,
+    status: str, params: dict[str, Any], *, bypassed: bool = False, previewed: bool = False,
 ) -> str:
     """The status an audit row records for a call that ended in ``status``.
 
     One place for both surfaces (``@vmware_tool`` and ``@guarded``): a completed
     dry run becomes ``dry_run``, and a policy bypass appends ``_bypassed``.
     """
-    preview = _is_dry_run(params) or _is_preview_result(result)
+    preview = previewed or _is_dry_run(params)
     recorded = "dry_run" if status == "ok" and preview else status
     return f"{recorded}_bypassed" if bypassed else recorded
 
@@ -608,7 +612,7 @@ def _finalize(state: _CallState) -> None:
 
     bypassed = bool(state.policy_result and state.policy_result.rule == "policy_disabled")
     final_status = audited_status(
-        state.status, state.safe_params, bypassed=bypassed, result=state.result,
+        state.status, state.safe_params, bypassed=bypassed, previewed=state.previewed,
     )
 
     # Update circuit-breaker state for armed patterns. An interrupted call is
