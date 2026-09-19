@@ -1,4 +1,4 @@
-## Unreleased — audit redaction runs in linear time; a `confirm=False` preview is audited as `dry_run`
+## v1.17.0 — audit redaction runs in linear time; a `confirm=False` preview is audited as `dry_run`
 
 The family's destructive MCP tools now take `confirm: bool = False` (HLD §7, revised 2026-09-16) and a bare call
 answers `{"action": "preview", ...}` without changing anything. `@vmware_tool` recognised a preview only by
