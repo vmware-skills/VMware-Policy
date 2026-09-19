@@ -1,4 +1,4 @@
-## Unreleased — a `confirm=False` preview is audited as `dry_run` and files no undo token
+## Unreleased — audit redaction runs in linear time; a `confirm=False` preview is audited as `dry_run`
 
 The family's destructive MCP tools now take `confirm: bool = False` (HLD §7, revised 2026-09-16) and a bare call
 answers `{"action": "preview", ...}` without changing anything. `@vmware_tool` recognised a preview only by
@@ -8,6 +8,12 @@ answers `{"action": "preview", ...}` without changing anything. `@vmware_tool` r
 * A result whose **top-level** `action` is `"preview"` is now audited as `dry_run` and records no undo token.
   A listing whose rows mention "preview" is data and still records `ok`.
 * `audited_status()` takes an optional `result=`; the CLI surface (`@guarded`) is unchanged.
+* **Audit redaction no longer stalls on long text.** Five redaction rules began with an unanchored identifier
+  prefix, so the engine retried a match at every character of an identifier: 2 000 characters of letters took
+  0.2 s, 8 000 took 3.4 s, and a 50 000-character guest command held an MCP call for minutes inside the audit
+  write — on every tool in the family. The prefixes are now anchored at the start of an identifier and the URI
+  scheme is bounded to 64 characters; 100 000 characters redact in milliseconds. The output was compared with
+  the previous rules on 200 000 generated strings with no differences.
 
 ## v1.16.0 — a failed call is never audited `ok`
 

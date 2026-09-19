@@ -835,7 +835,16 @@ _SECRET_WORDS = "|".join(
 #: The keyword still has to end the identifier: the separator that follows can
 #: only be ``:``/``=`` (optionally quoted), which is why ``token_count=5120`` and
 #: ``secret_manager_url=...`` are not credentials and stay readable.
-_KEY_PREFIX = r"[\w.\-]*(?:" + _SECRET_WORDS + r")"
+#:
+#: The ``(?<![\w.\-])`` anchor is what keeps this linear. Without it the engine
+#: tried a match at *every* position of an identifier, and each attempt scanned
+#: the rest of it and backtracked: a 2000-character run of letters took 0.2 s,
+#: 8000 took 3.4 s, a 50k-character guest command kept an audit write busy for
+#: minutes (2026-09-19). The anchor's class is the prefix's class, so any match
+#: that could start inside an identifier is also found from its start, and the
+#: replacement keeps ``\1`` — the redacted text is unchanged.
+_TOKEN_START = r"(?<![\w.\-])"
+_KEY_PREFIX = _TOKEN_START + r"[\w.\-]*(?:" + _SECRET_WORDS + r")"
 
 #: Value characters. ``@`` is *included* — ``password=P@ssw0rd`` used to redact a
 #: single character and print the rest. DSN userinfo, which is why ``@`` was
@@ -875,7 +884,10 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # still there. Redacting the whole group is the only reading that is safe
     # whichever element holds the secret.
     (
-        re.compile(r"(?i)\b(" + r"[\w.\-]*(?:auth|credential|credentials)" + r")(\s*=\s*)\([^()]*\)"),
+        re.compile(
+            r"(?i)(" + _TOKEN_START + r"[\w.\-]*(?:auth|credential|credentials)" + r")"
+            r"(\s*=\s*)\([^()]*\)"
+        ),
         r"\1\2(***)",
     ),
     # PEM private key blocks — no key=value shape at all, previously untouched.
@@ -898,7 +910,12 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # The username is non-greedy and the password greedy up to the last ``@``
     # before the host, which is what a URL parser does.
     (
-        re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^\s/:]*?):([^\s/]*)@(?=[^\s/@]*(?:[/\s?#]|$))"),
+        # The scheme is bounded ({0,63}) rather than anchored: a lookbehind would
+        # stop ``+http://u:p@h`` matching after the ``+``, and an unbounded scheme
+        # made every word boundary of ``a.a.a…`` rescan to the end (quadratic).
+        re.compile(
+            r"(?i)\b([a-z][a-z0-9+.\-]{0,63}://[^\s/:]*?):([^\s/]*)@(?=[^\s/@]*(?:[/\s?#]|$))"
+        ),
         r"\1:***@",
     ),
     # Cookie / Set-Cookie: the whole header value is credential material.
@@ -941,7 +958,10 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     # after a dash, so "password policy requires 15 characters" survives).
     (
         re.compile(
-            r"(?i)(-{1,2}[\w\-]*(?:" + _SECRET_WORDS + r"))(\s+)"
+            # Anchored at the start of the dashed word and allowed a word prefix
+            # (``foo--token``): matching from every dash made a run of dashes
+            # quadratic. ``\1`` keeps whatever the prefix matched.
+            r"(?i)((?<![\w\-])\w*-{1,2}[\w\-]*(?:" + _SECRET_WORDS + r"))(\s+)"
             + _STATUS_WORDS + r"[^\s'\",;]+"
         ),
         r"\1\2***",
