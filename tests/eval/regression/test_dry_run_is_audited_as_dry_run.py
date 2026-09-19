@@ -131,3 +131,47 @@ def test_audit_log_filters_and_shows_dry_runs(engine):
     out = CliRunner().invoke(app, ["log", "--status", "dry_run"]).output
     assert "dry_run" in out and "start" in out
     assert len(engine.query(status="dry_run", limit=10)) == 1
+
+
+# ── confirm=False previews (HLD §7, revised 2026-09-16) ──────────────────────
+# The family's gate spells a preview `confirm: bool = False` and answers with a
+# top-level `"action": "preview"`. Recognising only `dry_run=True` left every
+# such preview audited as `ok` and let it file an undo token for a change that
+# never happened.
+
+
+@pytest.mark.unit
+def test_a_confirm_false_preview_is_recorded_as_dry_run(engine):
+    @vmware_tool(risk_level="high")
+    def delete_thing(name: str, confirm: bool = False) -> dict:
+        if not confirm:
+            return {"action": "preview", "blast_radius": {"name": name}}
+        return {"action": "deleted", "blast_radius": {"name": name}}
+
+    delete_thing("a")
+    delete_thing("a", confirm=True)
+    assert _statuses(engine) == ["dry_run", "ok"]
+
+
+@pytest.mark.unit
+def test_a_confirm_false_preview_records_no_undo(engine):
+    calls = []
+
+    @vmware_tool(undo=lambda params, result: calls.append(params) or {"tool": "undo", "params": {}})
+    def power_off(name: str, confirm: bool = False) -> dict:
+        return {"action": "preview"} if not confirm else {"action": "powered_off"}
+
+    result = power_off("vm")
+    assert calls == [] and "_undo_id" not in result
+    power_off("vm", confirm=True)
+    assert len(calls) == 1, "a real change must still file its undo token"
+
+
+@pytest.mark.unit
+def test_a_nested_preview_word_is_not_a_preview(engine):
+    @vmware_tool
+    def listing(name: str) -> dict:
+        return {"items": [{"action": "preview"}], "mode": "preview"}
+
+    listing("x")
+    assert _statuses(engine) == ["ok"]

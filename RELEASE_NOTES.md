@@ -1,3 +1,14 @@
+## Unreleased — a `confirm=False` preview is audited as `dry_run` and files no undo token
+
+The family's destructive MCP tools now take `confirm: bool = False` (HLD §7, revised 2026-09-16) and a bare call
+answers `{"action": "preview", ...}` without changing anything. `@vmware_tool` recognised a preview only by
+`dry_run=True`, so every such call was recorded as `ok` — indistinguishable from the write — and a tool with an
+`undo=` callable filed an inverse for a change that never happened.
+
+* A result whose **top-level** `action` is `"preview"` is now audited as `dry_run` and records no undo token.
+  A listing whose rows mention "preview" is data and still records `ok`.
+* `audited_status()` takes an optional `result=`; the CLI surface (`@guarded`) is unchanged.
+
 ## v1.16.0 — a failed call is never audited `ok`
 
 A family survey on 2026-09-15 found failed calls recorded as `ok` on both surfaces. Reproduced here before the

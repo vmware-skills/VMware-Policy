@@ -491,13 +491,26 @@ def _is_dry_run(params: dict[str, Any]) -> bool:
     return params.get("dry_run") is True
 
 
-def audited_status(status: str, params: dict[str, Any], *, bypassed: bool = False) -> str:
+def _is_preview_result(result: Any) -> bool:
+    """True when the tool answered with the family's preview shape.
+
+    HLD §7 (revised 2026-09-16): gated tools take ``confirm: bool = False`` and a
+    bare call returns ``{"action": "preview", ...}``. Only the top-level key
+    counts; a row inside a listing that happens to say "preview" is data.
+    """
+    return isinstance(result, dict) and result.get("action") == "preview"
+
+
+def audited_status(
+    status: str, params: dict[str, Any], *, bypassed: bool = False, result: Any = None,
+) -> str:
     """The status an audit row records for a call that ended in ``status``.
 
     One place for both surfaces (``@vmware_tool`` and ``@guarded``): a completed
     dry run becomes ``dry_run``, and a policy bypass appends ``_bypassed``.
     """
-    recorded = "dry_run" if status == "ok" and _is_dry_run(params) else status
+    preview = _is_dry_run(params) or _is_preview_result(result)
+    recorded = "dry_run" if status == "ok" and preview else status
     return f"{recorded}_bypassed" if bypassed else recorded
 
 
@@ -511,7 +524,12 @@ def _record_undo(state: _CallState, result: Any) -> None:
     change happened and can be reversed, and offering to reverse a write that
     never landed is worse than offering nothing.
     """
-    if state.undo is None or state.status != "ok" or _is_dry_run(state.safe_params):
+    if (
+        state.undo is None
+        or state.status != "ok"
+        or _is_dry_run(state.safe_params)
+        or _is_preview_result(result)
+    ):
         return
     try:
         descriptor = state.undo(state.safe_params, result)
@@ -589,7 +607,9 @@ def _finalize(state: _CallState) -> None:
         )
 
     bypassed = bool(state.policy_result and state.policy_result.rule == "policy_disabled")
-    final_status = audited_status(state.status, state.safe_params, bypassed=bypassed)
+    final_status = audited_status(
+        state.status, state.safe_params, bypassed=bypassed, result=state.result,
+    )
 
     # Update circuit-breaker state for armed patterns. An interrupted call is
     # skipped: a user cancelling (or a client giving up) says nothing about
