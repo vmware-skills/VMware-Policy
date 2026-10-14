@@ -185,3 +185,45 @@ def test_cli_write_and_read_rows_say_cli(engine):
         "delete_vm": "cli",
         "list_vms": "cli",
     }
+
+
+# ═══ review of §16 (2026-10-14): globs and names whose meaning changed ═══════
+
+
+def test_every_tool_a_pre_2_0_glob_matched_is_still_refused(rules):
+    """`vm_*` matched 31 aiops/monitor tools under their old names; it must still refuse all of them."""
+    rules('deny:\n  - name: no-vm\n    operations: ["vm_*"]\n    reason: no\n')
+    for server, pairs in renames.table().items():
+        skill = server.removeprefix("vmware-").replace("-", "_")
+        for old, new in pairs.items():
+            if old.startswith("vm_"):
+                with pytest.raises(PolicyDenied):
+                    guard(skill, new)
+
+
+def test_rule_that_now_matches_more_tools_is_reported(tmp_path):
+    p = tmp_path / "rules.yaml"
+    p.write_text('deny:\n  - name: no-get\n    operations: ["get_*"]\n    reason: no\n', encoding="utf-8")
+    eng = PolicyEngine(rules_path=p)
+    eng.check_allowed("list_vms")  # loads the rules
+    widened = {(w["rule"], w["skill"], w["tool"]) for w in eng.rename_widenings()}
+    assert ("no-get", "monitor", "get_vm_info") in widened
+
+
+def test_rule_that_matched_the_old_name_too_is_not_reported(tmp_path):
+    p = tmp_path / "rules.yaml"
+    p.write_text('deny:\n  - name: r\n    operations: ["*delete*"]\n    reason: no\n', encoding="utf-8")
+    eng = PolicyEngine(rules_path=p)
+    eng.check_allowed("list_vms")
+    tools = {w["tool"] for w in eng.rename_widenings()}
+    assert "delete_vm" not in tools  # vm_delete matched *delete* already
+
+
+def test_old_vks_name_reused_by_aiops_is_reported(tmp_path):
+    p = tmp_path / "rules.yaml"
+    p.write_text('deny:\n  - name: r\n    operations: ["list_vm_snapshots"]\n    reason: no\n',
+                 encoding="utf-8")
+    eng = PolicyEngine(rules_path=p)
+    eng.check_allowed("list_vms")
+    widened = {(w["skill"], w["tool"]) for w in eng.rename_widenings()}
+    assert {("aiops", "list_vm_snapshots"), ("monitor", "list_vm_snapshots")} <= widened

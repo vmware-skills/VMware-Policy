@@ -15,10 +15,11 @@ import sys
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-from vmware_policy.audit import get_engine
 from vmware_policy import cli_local
+from vmware_policy.audit import get_engine
 
 
 def _harden_console_encoding() -> None:
@@ -261,6 +262,20 @@ def policy(
             f"\n[red]Every operation is currently DENIED.[/] {engine._load_error}"
         )
         raise typer.Exit(code=1)
+
+    widened = engine.rename_widenings()
+    if widened:
+        console.print(
+            f"\n[yellow]{len(widened)} match(es) widened by the 2.0 tool renames[/] — these "
+            "rules now also deny tools they did not match before (old name in brackets):"
+        )
+        for w in widened[:20]:
+            console.print(
+                f"  rule {escape(w['rule'])!r} ({escape(w['pattern'])}): "
+                f"vmware-{w['skill'].replace('_', '-')} {w['tool']} {escape('[' + w['old'] + ']')}"
+            )
+        if len(widened) > 20:
+            console.print(f"  … and {len(widened) - 20} more")
 
     if not operation:
         console.print("\nPass --operation to see what happens to a specific call.")

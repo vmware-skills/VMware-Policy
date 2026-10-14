@@ -164,6 +164,18 @@ class PolicyEngine:
             self._source = "user"
             self._load_error = None
             _log.debug("Loaded %d policy rules from %s", len(self._rules), self._path)
+            # One line per rule, not per tool: a single `get_*` rule widens to 50+
+            # tools, and every server prints this at start and on each reload.
+            per_rule: dict[str, int] = {}
+            for w in self.rename_widenings():
+                per_rule[w["rule"]] = per_rule.get(w["rule"], 0) + 1
+            for rule_name, count in per_rule.items():
+                _log.warning(
+                    "Policy rule %r now also denies %d tool(s) it did not match before the "
+                    "2.0 renames (it denies more, never less). Run `vmware-audit policy` "
+                    "to list them.",
+                    rule_name, count,
+                )
         except Exception as exc:
             _log.error(
                 "Failed to load policy rules from %s — failing CLOSED: every "
@@ -421,6 +433,32 @@ class PolicyEngine:
                 return False
 
         return True
+
+    def rename_widenings(self) -> list[dict[str, str]]:
+        """Deny patterns that match a renamed tool's new name but not its old one.
+
+        Matching against both names (HLD §16 D-15) means a pre-2.0 rule never
+        matches LESS. It can match more: ``get_*`` now also catches
+        ``get_vm_info`` (was ``vm_info``), and ``list_vm_snapshots`` — vks's old
+        name — is aiops/monitor's new one. Denying more is the safe direction,
+        but the operator wrote neither, so each case is reported, not silent.
+        """
+        from vmware_policy.renames import table  # local: renames is optional data
+
+        out: list[dict[str, str]] = []
+        for rule in self._rules.get("deny") or []:
+            for pattern in rule.get("operations") or []:
+                for server, pairs in table().items():
+                    for old, new in pairs.items():
+                        if self._pattern_match(pattern, new) and not self._pattern_match(pattern, old):
+                            out.append({
+                                "rule": str(rule.get("name", "")),
+                                "pattern": pattern,
+                                "skill": server.removeprefix("vmware-").replace("-", "_"),
+                                "tool": new,
+                                "old": old,
+                            })
+        return out
 
     @staticmethod
     def _pattern_match(pattern: str, value: str) -> bool:
