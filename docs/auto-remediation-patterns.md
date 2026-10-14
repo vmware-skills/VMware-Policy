@@ -78,7 +78,7 @@ classification:
 # What audit-row pattern triggers this remediation
 trigger:
   skill: vmware-storage
-  tool: storage_iscsi_status
+  tool: get_iscsi_status
   result_predicate:
     # Result JSON must satisfy this jsonpath/jq-like predicate
     # PoC uses simple key=value matching
@@ -87,7 +87,7 @@ trigger:
 # What operation to perform when trigger matches
 action:
   skill: vmware-storage
-  tool: storage_rescan
+  tool: rescan_storage
   # Parameters interpolated from the triggering audit row
   params_from_trigger:
     host: "$.params.host"
@@ -98,7 +98,7 @@ validation:
   delay_seconds: 30
   re_check:
     skill: vmware-storage
-    tool: storage_iscsi_status
+    tool: get_iscsi_status
     expect:
       has_stale_devices: false
 
@@ -121,7 +121,7 @@ approval:
 1. **Risk**: rescanning HBAs is observably idempotent. Worst case is a few seconds of extra IO load on the target.
 2. **Reversibility**: there is no destructive change to undo — the operation only re-reads device state.
 3. **Repeatability**: in our reference deployments, this operation has historically been the most-repeated manual fix. Audit data should show clear repetition.
-4. **Validation**: the success criterion is observable — `storage_iscsi_status` after rescan shows healthy devices.
+4. **Validation**: the success criterion is observable — `get_iscsi_status` after rescan shows healthy devices.
 5. **Tight blast radius**: the operation only affects a single ESXi host. No cluster-wide cascades.
 
 ## What ships in v1.5.17
