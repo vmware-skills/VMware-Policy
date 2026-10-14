@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from vmware_policy.paths import ops_path
+from vmware_policy.renames import all_names_for
 
 _log = logging.getLogger("vmware-policy.audit")
 
@@ -47,7 +48,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     risk_level  TEXT    NOT NULL DEFAULT 'low',
     rationale   TEXT    NOT NULL DEFAULT '',
     approved_by TEXT    NOT NULL DEFAULT '',
-    risk_tier   TEXT    NOT NULL DEFAULT ''
+    risk_tier   TEXT    NOT NULL DEFAULT '',
+    surface     TEXT    NOT NULL DEFAULT ''
 )
 """
 
@@ -59,11 +61,14 @@ _MIGRATIONS = (
     ("rationale", "TEXT NOT NULL DEFAULT ''"),
     ("approved_by", "TEXT NOT NULL DEFAULT ''"),
     ("risk_tier", "TEXT NOT NULL DEFAULT ''"),
+    # HLD §16 D-14: which entry point the call came through. Rows written
+    # before the column existed read as '' — unknown, never a guessed surface.
+    ("surface", "TEXT NOT NULL DEFAULT ''"),
 )
 
 _INSERT = """\
-INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier, surface)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -188,6 +193,7 @@ class AuditEngine:
         rationale: str = "",
         approved_by: str = "",
         risk_tier: str = "",
+        surface: str = "",
     ) -> None:
         """Write one audit record.  Never raises — swallows errors to avoid
         disrupting the actual tool execution.
@@ -219,6 +225,7 @@ class AuditEngine:
                     rationale,
                     approved_by,
                     risk_tier,
+                    surface,
                 ),
             )
             conn.commit()
@@ -293,8 +300,13 @@ class AuditEngine:
         workflow_id: str | None = None,
         since: str | None = None,
         limit: int = 50,
+        surface: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Query audit records with optional filters."""
+        """Query audit records with optional filters.
+
+        ``tool`` also matches the names a tool had before or after the 2.0
+        renames (HLD §16 D-15), so history stays findable under either name.
+        """
         clauses: list[str] = []
         values: list[Any] = []
 
@@ -302,8 +314,13 @@ class AuditEngine:
             clauses.append("skill = ?")
             values.append(skill)
         if tool:
-            clauses.append("tool = ?")
-            values.append(tool)
+            names = all_names_for(tool)
+            # Only "?" placeholders are interpolated; the names are bound below.
+            clauses.append(f"tool IN ({', '.join('?' for _ in names)})")  # nosec B608
+            values.extend(names)
+        if surface:
+            clauses.append("surface = ?")
+            values.append(surface)
         if status:
             clauses.append("status = ?")
             values.append(status)

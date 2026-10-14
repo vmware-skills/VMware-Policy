@@ -20,6 +20,9 @@ from typing import Any
 from vmware_policy.audit import detect_agent, get_engine
 from vmware_policy.environment import resolve_environment
 from vmware_policy.policy import PolicyDenied, PolicyResult, get_policy_engine
+from vmware_policy.renames import old_names
+from vmware_policy.surface import current_surface
+from vmware_policy.surface import validate as validate_surface
 
 
 def guard(
@@ -55,7 +58,13 @@ def guard(
         target, skill=skill, warn_unlabeled=engine.has_environment_scoped_rules()
     )
     result = engine.check_allowed(
-        tool, env=env, risk_level=risk_level, params=params or {}
+        tool,
+        env=env,
+        risk_level=risk_level,
+        params=params or {},
+        # A rule written before the 2.0 renames still names the old tool
+        # (HLD §16 D-15, I-14); match it against both names.
+        aliases=old_names(skill, tool),
     )
     if not result.allowed:
         raise PolicyDenied(result)
@@ -74,6 +83,7 @@ def audit_call(
     risk_level: str = "low",
     rationale: str = "",
     approved_by: str = "",
+    surface: str | None = None,
 ) -> None:
     """Write exactly one row to ``~/.vmware/audit.db`` — the single audit sink for
     every surface (I-8). Never raises: ``AuditEngine.log`` swallows its own errors
@@ -111,4 +121,7 @@ def audit_call(
         risk_level=risk_level,
         rationale=rationale,
         approved_by=approved_by,
+        # HLD §16 D-14. An explicit surface is validated (a typo is a bug, not a
+        # new surface); otherwise the process/context surface (stdio by default).
+        surface=validate_surface(surface) if surface is not None else current_surface(),
     )

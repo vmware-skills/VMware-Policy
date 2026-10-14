@@ -296,6 +296,9 @@ def _enforced(
                     # A completed --dry-run records "dry_run", not "ok".
                     status=audited_status(status, params, bypassed=bypassed),
                     duration_ms=int((time.time() - start) * 1000),
+                    # HLD §16 D-14: the same tool name is reachable over MCP, so
+                    # the row must say which door this call used.
+                    surface="cli",
                     agent=detect_agent(),
                     risk_level=risk_level,
                     rationale=os.environ.get("VMWARE_AUDIT_RATIONALE", ""),

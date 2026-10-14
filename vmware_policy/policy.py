@@ -266,6 +266,7 @@ class PolicyEngine:
         env: str = "",
         risk_level: str = "low",
         params: dict[str, Any] | None = None,
+        aliases: tuple[str, ...] = (),
     ) -> PolicyResult:
         """Check if an operation is allowed by policy.
 
@@ -274,6 +275,8 @@ class PolicyEngine:
             env: Target environment name (e.g. 'production').
             risk_level: Risk level declared by @vmware_tool.
             params: Operation parameters for rule evaluation.
+            aliases: Other names of the same operation (its pre-2.0 name, HLD
+                §16 D-15). A rule matching any of them matches the operation.
 
         Returns:
             PolicyResult with allowed=True/False and reason.
@@ -328,7 +331,7 @@ class PolicyEngine:
         # ── Evaluate deny rules ───────────────────────────────────────
         deny_rules = self._rules.get("deny", [])
         for rule in deny_rules:
-            if self._rule_matches(rule, operation, env, risk_level, params):
+            if self._rule_matches(rule, operation, env, risk_level, params, aliases):
                 reason = rule.get("reason", f"Denied by rule: {rule.get('name', 'unnamed')}")
                 return PolicyResult(allowed=False, rule=rule.get("name", "deny"), reason=reason)
 
@@ -389,14 +392,16 @@ class PolicyEngine:
         env: str,
         risk_level: str,
         params: dict[str, Any] | None,
+        aliases: tuple[str, ...] = (),
     ) -> bool:
-        """Check if a deny rule matches the current operation."""
+        """Check if a deny rule matches the current operation (under any of its names)."""
         # Match by operation pattern
         # Note: "operations" key absent → match all (no filter).
         # "operations: []" → match nothing (explicit empty = no operations apply).
         if "operations" in rule:
             ops = rule["operations"]
-            if not ops or not any(self._pattern_match(op, operation) for op in ops):
+            names = (operation, *aliases)
+            if not ops or not any(self._pattern_match(op, n) for op in ops for n in names):
                 return False
 
         # Match by environment. env is the target's *declared* environment
