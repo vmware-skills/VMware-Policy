@@ -52,9 +52,24 @@ def test_surface_defaults_to_the_process_surface(engine):
     assert _rows(engine)[0]["surface"] == "mcp-https"
 
 
-def test_an_unknown_surface_is_refused_not_recorded(engine):
+def test_an_unknown_surface_never_breaks_the_call_and_is_marked_invalid(engine):
+    """audit_call runs in finally blocks; raising there would replace the real result."""
+    guard_mod.audit_call("aiops", "list_vms", surface="carrier-pigeon")
+    assert _rows(engine)[0]["surface"] == "invalid:carrier-pigeon"
+
+
+def test_surface_is_validated_where_it_is_set():
     with pytest.raises(ValueError):
-        guard_mod.audit_call("aiops", "list_vms", surface="carrier-pigeon")
+        surface.set_process_surface("carrier-pigeon")
+    with pytest.raises(ValueError), surface.use_surface("carrier-pigeon"):
+        pass
+
+
+def test_use_surface_is_undone_after_the_block(engine):
+    with surface.use_surface("daemon"):
+        guard_mod.audit_call("aiops", "set_vm_ttl")
+    guard_mod.audit_call("aiops", "list_vms")
+    assert [r["surface"] for r in reversed(_rows(engine))] == ["daemon", "mcp-stdio"]
 
 
 def test_mcp_decorator_records_mcp_stdio_by_default(engine):
@@ -227,3 +242,72 @@ def test_old_vks_name_reused_by_aiops_is_reported(tmp_path):
     eng.check_allowed("list_vms")
     widened = {(w["skill"], w["tool"]) for w in eng.rename_widenings()}
     assert {("aiops", "list_vm_snapshots"), ("monitor", "list_vm_snapshots")} <= widened
+
+
+@pytest.mark.parametrize("pattern", ["vm_*", "*_delete", "cluster_*", "pool_*", "case_*", "*_list"])
+def test_no_pre_2_0_glob_matches_less(rules, pattern):
+    """I-14 for globs: every renamed tool whose OLD name a glob matched is still refused."""
+    from fnmatch import fnmatchcase
+
+    rules(f'deny:\n  - name: g\n    operations: ["{pattern}"]\n    reason: no\n')
+    hits = 0
+    for server, pairs in renames.table().items():
+        skill = server.removeprefix("vmware-").replace("-", "_")
+        for old, new in pairs.items():
+            if fnmatchcase(old, pattern):
+                hits += 1
+                with pytest.raises(PolicyDenied):
+                    guard(skill, new)
+    assert hits, f"{pattern} matched no old name: the test would pass vacuously"
+
+
+def test_skill_keys_from_real_module_names_reach_the_table():
+    """guard() gets the skill from skills.skill_name(module); that key must find the renames."""
+    from vmware_policy.skills import skill_name
+
+    for server, pairs in renames.table().items():
+        module = server.replace("-", "_") + ".mcp_server.server"
+        old, new = next(iter(pairs.items()))
+        assert renames.old_names(skill_name(module), new), (server, module)
+
+
+def test_policy_command_agrees_with_enforcement(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from vmware_policy.cli import app
+
+    (tmp_path / "rules.yaml").write_text(
+        'deny:\n  - name: r\n    operations: ["vm_delete"]\n    reason: no\n', encoding="utf-8")
+    monkeypatch.setenv("OPS_HOME", str(tmp_path))
+    from vmware_policy.policy import reset_policy_engine
+    reset_policy_engine()
+    for argv in (["policy", "-o", "delete_vm", "--skill", "aiops"], ["policy", "-o", "delete_vm"]):
+        out = CliRunner().invoke(app, argv)
+        assert "DENIED" in out.output, (argv, out.output)
+    reset_policy_engine()
+
+
+def test_a_malformed_deny_entry_does_not_change_how_rules_load(tmp_path):
+    p = tmp_path / "rules.yaml"
+    p.write_text('deny:\n  - name: ok\n    operations: ["vm_delete"]\n    reason: no\n  - vm_delete\n',
+                 encoding="utf-8")
+    eng = PolicyEngine(rules_path=p)
+    eng._load_rules()
+    # The widening report skips the bare-string entry; whether such an entry is
+    # usable at check time is the engine's existing behaviour, not this report's.
+    assert eng._load_error is None
+    assert eng.rename_widenings() == []
+
+
+def test_audit_query_with_skill_uses_only_that_skills_renames(engine):
+    guard_mod.audit_call("avi", "list_lb_pools", surface="cli")
+    guard_mod.audit_call("vdi", "list_desktop_pools", surface="cli")
+    assert [r["tool"] for r in engine.query(skill="avi", tool="pool_list")] == ["list_lb_pools"]
+    assert {r["tool"] for r in engine.query(tool="pool_list")} == {"list_lb_pools", "list_desktop_pools"}
+
+
+def test_disabled_policy_does_not_need_the_rename_data(monkeypatch):
+    monkeypatch.setenv("VMWARE_POLICY_DISABLED", "1")
+    monkeypatch.setattr(renames, "old_names", lambda *_a: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(guard_mod, "old_names", renames.old_names)
+    assert guard("aiops", "delete_vm").allowed

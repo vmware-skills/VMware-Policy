@@ -20,6 +20,7 @@ from rich.table import Table
 
 from vmware_policy import cli_local
 from vmware_policy.audit import get_engine
+from vmware_policy.renames import old_names, old_names_any_skill
 
 
 def _harden_console_encoding() -> None:
@@ -64,12 +65,16 @@ def log(
     ),
     workflow_id: str | None = typer.Option(None, "--workflow-id", help="Filter by workflow ID"),
     since: str | None = typer.Option(None, help="Show entries after date (ISO format)"),
+    surface: str | None = typer.Option(
+        None, help="Filter by entry point (mcp-stdio/mcp-https/mcp-http-loopback/cli/daemon)"
+    ),
 ) -> None:
     """Show recent audit log entries."""
     engine = get_engine()
     rows = engine.query(
         skill=skill,
         tool=tool,
+        surface=surface,
         status=status,
         workflow_id=workflow_id,
         since=since,
@@ -80,16 +85,19 @@ def log(
         console.print("[dim]No audit records found.[/dim]")
         return
 
-    table = Table(title=f"Audit Log (last {len(rows)} entries)", show_lines=False)
-    table.add_column("Time", style="dim", width=20)
-    table.add_column("Skill", style="cyan", width=10)
-    table.add_column("Tool", style="green", width=24)
-    table.add_column("Status", width=10)
-    table.add_column("Agent", style="dim", width=8)
-    table.add_column("Duration", justify="right", width=8)
+    table = Table(title=f"Audit Log (last {len(rows)} entries)", show_lines=False, pad_edge=False)
+    # Fixed widths for the short columns; Tool is the one that gives way on a
+    # narrow terminal (HLD §16 D-14 added "Via" to what was an 80-column table).
+    table.add_column("Time (UTC)", style="dim", width=14, no_wrap=True)
+    table.add_column("Skill", style="cyan", width=8, no_wrap=True, overflow="ellipsis")
+    table.add_column("Tool", style="green", ratio=1, overflow="fold")
+    table.add_column("Status", width=11, no_wrap=True)
+    table.add_column("Via", style="dim", width=6, no_wrap=True, overflow="ellipsis")
+    table.add_column("Agent", style="dim", width=6, no_wrap=True, overflow="ellipsis")
+    table.add_column("Took", justify="right", width=6, no_wrap=True, overflow="ellipsis")
 
     for row in reversed(rows):  # oldest first
-        ts = row["ts"][:19].replace("T", " ")
+        ts = row["ts"][5:19].replace("T", " ")  # MM-DD HH:MM:SS
         st = row["status"]
         if "denied" in st or "error" in st:
             style = "red"
@@ -102,6 +110,7 @@ def log(
             row["skill"],
             row["tool"],
             f"[{style}]{st}[/{style}]" if style else st,
+            (row.get("surface") or "-").removeprefix("mcp-"),
             row["agent"],
             f"{row['duration_ms']}ms",
         )
@@ -223,6 +232,10 @@ def policy(
     ),
     env: str = typer.Option("", "--env", "-e", help="Target environment, e.g. production."),
     risk: str = typer.Option("medium", "--risk", "-r", help="Risk level the tool declares."),
+    skill: str = typer.Option(
+        "", "--skill", "-s",
+        help="Skill the tool belongs to (aiops, monitor, …): old 2.0-renamed names count for it.",
+    ),
 ) -> None:
     """Show which policy rules are in force, and what they do to an operation.
 
@@ -281,7 +294,10 @@ def policy(
         console.print("\nPass --operation to see what happens to a specific call.")
         return
 
-    allowed = engine.check_allowed(operation, env=env, risk_level=risk)
+    # Same matching as guard(): a pre-2.0 name in a rule still applies (HLD §16
+    # D-15). Without --skill, every skill's old names for this tool count.
+    aliases = old_names(skill, operation) if skill else old_names_any_skill(operation)
+    allowed = engine.check_allowed(operation, env=env, risk_level=risk, aliases=aliases)
 
     console.print(f"\n[bold]{operation}[/bold] (env={env or 'unset'}, risk={risk})")
     if not allowed.allowed:

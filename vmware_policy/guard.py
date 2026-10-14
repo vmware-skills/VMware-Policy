@@ -15,6 +15,8 @@ install ships full read+write and lets the account's privilege decide what lands
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 
 from vmware_policy.audit import detect_agent, get_engine
@@ -23,6 +25,8 @@ from vmware_policy.policy import PolicyDenied, PolicyResult, get_policy_engine
 from vmware_policy.renames import old_names
 from vmware_policy.surface import current_surface
 from vmware_policy.surface import validate as validate_surface
+
+_log = logging.getLogger(__name__)
 
 
 def guard(
@@ -63,12 +67,23 @@ def guard(
         risk_level=risk_level,
         params=params or {},
         # A rule written before the 2.0 renames still names the old tool
-        # (HLD §16 D-15, I-14); match it against both names.
-        aliases=old_names(skill, tool),
+        # (HLD §16 D-15, I-14); match it against both names. Skipped under the
+        # documented bypass so a broken install cannot defeat the escape hatch.
+        aliases=() if os.environ.get("VMWARE_POLICY_DISABLED") == "1" else old_names(skill, tool),
     )
     if not result.allowed:
         raise PolicyDenied(result)
     return result
+
+
+def _surface_for_row(surface: str | None) -> str:
+    if surface is None:
+        return current_surface()
+    try:
+        return validate_surface(surface)
+    except ValueError:
+        _log.error("audit_call got unknown surface %r; recording it as invalid", surface)
+        return f"invalid:{surface}"
 
 
 def audit_call(
@@ -121,7 +136,8 @@ def audit_call(
         risk_level=risk_level,
         rationale=rationale,
         approved_by=approved_by,
-        # HLD §16 D-14. An explicit surface is validated (a typo is a bug, not a
-        # new surface); otherwise the process/context surface (stdio by default).
-        surface=validate_surface(surface) if surface is not None else current_surface(),
+        # HLD §16 D-14. Audit must never break the call, so a bad value is
+        # filed as invalid:<value> with an error, not raised. Values are
+        # validated where they are SET (set_process_surface / use_surface).
+        surface=_surface_for_row(surface),
     )

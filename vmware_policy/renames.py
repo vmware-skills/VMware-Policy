@@ -36,11 +36,22 @@ def old_names(skill: str, tool: str) -> tuple[str, ...]:
 
 
 @cache
-def all_names_for(tool: str) -> tuple[str, ...]:
-    """``tool`` plus every name it was renamed from or to, in any skill (audit filters)."""
+def old_names_any_skill(tool: str) -> tuple[str, ...]:
+    """Every pre-2.0 name ``tool`` had in any skill (for a diagnostic that names no skill)."""
+    return tuple(sorted({old for pairs in table().values() for old, new in pairs.items() if new == tool}))
+
+
+@cache
+def all_names_for(tool: str, skill: str | None = None) -> tuple[str, ...]:
+    """``tool`` plus every name it was renamed from or to (audit filters).
+
+    With ``skill``, only that skill's renames count — ``pool_list`` is AVI's
+    ``list_lb_pools`` and VDI's ``list_desktop_pools``. Without it, every skill's.
+    """
+    servers = [_server(skill)] if skill else list(table())
     names = {tool}
-    for pairs in table().values():
-        for old, new in pairs.items():
+    for server in servers:
+        for old, new in table().get(server, {}).items():
             if tool in (old, new):
                 names.update((old, new))
     return tuple(sorted(names))

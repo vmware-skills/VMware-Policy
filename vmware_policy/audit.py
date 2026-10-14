@@ -314,7 +314,7 @@ class AuditEngine:
             clauses.append("skill = ?")
             values.append(skill)
         if tool:
-            names = all_names_for(tool)
+            names = all_names_for(tool, skill)
             # Only "?" placeholders are interpolated; the names are bound below.
             clauses.append(f"tool IN ({', '.join('?' for _ in names)})")  # nosec B608
             values.extend(names)

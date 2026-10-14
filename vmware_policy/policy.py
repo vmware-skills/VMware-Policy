@@ -167,7 +167,12 @@ class PolicyEngine:
             # One line per rule, not per tool: a single `get_*` rule widens to 50+
             # tools, and every server prints this at start and on each reload.
             per_rule: dict[str, int] = {}
-            for w in self.rename_widenings():
+            try:
+                widenings = self.rename_widenings()
+            except Exception:  # noqa: BLE001 — a report must never decide whether rules load
+                _log.debug("rename widening report failed", exc_info=True)
+                widenings = []
+            for w in widenings:
                 per_rule[w["rule"]] = per_rule.get(w["rule"], 0) + 1
             for rule_name, count in per_rule.items():
                 _log.warning(
@@ -447,7 +452,11 @@ class PolicyEngine:
 
         out: list[dict[str, str]] = []
         for rule in self._rules.get("deny") or []:
+            if not isinstance(rule, dict):
+                continue
             for pattern in rule.get("operations") or []:
+                if not isinstance(pattern, str):
+                    continue
                 for server, pairs in table().items():
                     for old, new in pairs.items():
                         if self._pattern_match(pattern, new) and not self._pattern_match(pattern, old):

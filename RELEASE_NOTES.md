@@ -1,3 +1,22 @@
+## v1.18.0 — audit records the entry point; deny rules keep working across the 2.0 tool renames
+
+Backward compatible. Skills on 1.x keep working with it; the 2.0 skills require it.
+
+* **Audit `surface` column** (HLD §16 D-14). The same tool name is reachable over MCP and from the CLI, so audit
+  rows could not say which door a call used. Every row now records `mcp-stdio`, `mcp-https`,
+  `mcp-http-loopback`, `cli` or `daemon`; existing `audit.db` files gain the column in place and older rows read
+  as unknown. `vmware-audit log` shows it (column "Via") and filters with `--surface`. A writer passing an
+  unknown value never breaks the call: the row is filed as `invalid:<value>` with an error log.
+* **Deny rules written with pre-2.0 tool names keep working** (HLD §16 D-15). The 2.0 skills rename 170 MCP
+  tools verb-first (`vm_delete` → `delete_vm`). Policy now matches every rule against a tool's new name **and**
+  its old name in that skill, so no existing rule — exact or glob (`vm_*`, `*_delete`) — matches less than
+  before. Some match more (`get_*` now also catches `get_vm_info`; vks's old `list_vm_snapshots` is
+  aiops/monitor's new name): each rules load logs one line per such rule, and `vmware-audit policy` lists the
+  tools. `vmware-audit policy --operation` takes `--skill` and gives the same answer enforcement gives.
+  `vmware-audit log --tool` finds a tool's history under either name. `VMWARE_POLICY_DISABLED=1` skips the
+  rename lookup, so the escape hatch works even on a damaged install.
+* `vmware-audit log` fits an 80-column terminal again with the extra column: Tool is the column that wraps.
+
 ## v1.17.0 — audit redaction runs in linear time; a `confirm=False` preview is audited as `dry_run`
 
 The family's destructive MCP tools now take `confirm: bool = False` (HLD §7, revised 2026-09-16) and a bare call
