@@ -82,7 +82,7 @@ PyYAML 是声明的依赖；若缺失，被装饰的工具调用会失败而不�
 # 拒绝规则 -- 阻止特定操作
 deny:
   - name: no-delete-in-prod
-    operations: ["delete_*", "cluster_delete"]
+    operations: ["delete_*", "remove_cluster_host"]
     environments: ["production"]
     reason: "生产环境禁止破坏性操作"
 

@@ -89,7 +89,7 @@ vmware-audit stats          # verify installation
    ```yaml
    deny:
      - name: no-delete-in-prod
-       operations: ["delete_*", "cluster_delete"]
+       operations: ["delete_*", "remove_cluster_host"]
        environments: ["production"]
        reason: "Destructive operations blocked in production"
    maintenance_window:
@@ -97,7 +97,7 @@ vmware-audit stats          # verify installation
      end: "06:00"
    ```
 3. Rules hot-reload automatically -- no restart needed
-4. Confirm the rules loaded: `vmware-audit policy` prints the rule source; `vmware-audit policy --operation vm_delete --env production --risk critical` shows what happens to one call
+4. Confirm the rules loaded: `vmware-audit policy` prints the rule source; `vmware-audit policy --operation delete_vm --skill aiops --env production --risk critical` shows what happens to one call
 5. Verify: `vmware-audit log --status denied` to see blocked operations
 
 ### Export Audit Logs for Compliance

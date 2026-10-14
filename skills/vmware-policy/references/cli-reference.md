@@ -114,7 +114,8 @@ vmware-audit policy [OPTIONS]
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--operation`, `-o` | TEXT | "" | Tool name to evaluate, e.g. `vm_delete` |
+| `--operation`, `-o` | TEXT | "" | Tool name to evaluate, e.g. `delete_vm` |
+| `--skill`, `-s` | TEXT | "" | Skill the tool belongs to (`aiops`, `vdi`, …): its pre-/post-2.0 names count, the same as enforcement. Omitted: every skill's old names for that tool |
 | `--env`, `-e` | TEXT | "" | Target environment, e.g. `production` |
 | `--risk`, `-r` | TEXT | medium | Risk level the tool declares |
 
