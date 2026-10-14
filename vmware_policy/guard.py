@@ -22,7 +22,7 @@ from typing import Any
 from vmware_policy.audit import detect_agent, get_engine
 from vmware_policy.environment import resolve_environment
 from vmware_policy.policy import PolicyDenied, PolicyResult, get_policy_engine
-from vmware_policy.renames import old_names
+from vmware_policy.renames import other_names
 from vmware_policy.surface import current_surface
 from vmware_policy.surface import validate as validate_surface
 
@@ -69,7 +69,7 @@ def guard(
         # A rule written before the 2.0 renames still names the old tool
         # (HLD §16 D-15, I-14); match it against both names. Skipped under the
         # documented bypass so a broken install cannot defeat the escape hatch.
-        aliases=() if os.environ.get("VMWARE_POLICY_DISABLED") == "1" else old_names(skill, tool),
+        aliases=() if os.environ.get("VMWARE_POLICY_DISABLED") == "1" else other_names(skill, tool),
     )
     if not result.allowed:
         raise PolicyDenied(result)

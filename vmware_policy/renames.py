@@ -36,6 +36,32 @@ def old_names(skill: str, tool: str) -> tuple[str, ...]:
 
 
 @cache
+def other_names(skill: str, tool: str) -> tuple[str, ...]:
+    """Every other name ``tool`` has in ``skill`` across the 2.0 rename, in both directions.
+
+    A 2.0 skill calls the new name and a rule may still say the old one; a 1.x
+    skill sharing the same ``rules.yaml`` calls the OLD name while the rule now
+    says the new one. Policy matches a rule against all of them.
+    """
+    pairs = table().get(_server(skill), {})
+    names = {old for old, new in pairs.items() if new == tool}
+    if tool in pairs:
+        names.add(pairs[tool])
+    names.discard(tool)
+    return tuple(sorted(names))
+
+
+@cache
+def new_names() -> frozenset[str]:
+    return frozenset(new for pairs in table().values() for new in pairs.values())
+
+
+@cache
+def old_names_all() -> frozenset[str]:
+    return frozenset(old for pairs in table().values() for old in pairs)
+
+
+@cache
 def old_names_any_skill(tool: str) -> tuple[str, ...]:
     """Every pre-2.0 name ``tool`` had in any skill (for a diagnostic that names no skill)."""
     return tuple(sorted({old for pairs in table().values() for old, new in pairs.items() if new == tool}))

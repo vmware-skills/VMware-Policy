@@ -308,6 +308,39 @@ def test_audit_query_with_skill_uses_only_that_skills_renames(engine):
 
 def test_disabled_policy_does_not_need_the_rename_data(monkeypatch):
     monkeypatch.setenv("VMWARE_POLICY_DISABLED", "1")
-    monkeypatch.setattr(renames, "old_names", lambda *_a: (_ for _ in ()).throw(FileNotFoundError()))
-    monkeypatch.setattr(guard_mod, "old_names", renames.old_names)
+    boom = lambda *_a: (_ for _ in ()).throw(FileNotFoundError())  # noqa: E731
+    monkeypatch.setattr(guard_mod, "other_names", boom)
     assert guard("aiops", "delete_vm").allowed
+
+
+# ═══ integration review (2026-10-14): both directions; no noise on 2.0 rules ═
+
+
+def test_a_rule_with_the_new_name_also_refuses_a_1x_skill_calling_the_old_name(rules):
+    """rules.yaml is shared by every install on the host. After a user writes the
+    2.0 name, a 1.x skill (still calling vm_delete) must be refused too."""
+    rules('deny:\n  - name: r\n    operations: ["delete_vm"]\n    reason: no\n')
+    with pytest.raises(PolicyDenied):
+        guard("aiops", "vm_delete")
+    rules('deny:\n  - name: r\n    operations: ["list_desktop_pools"]\n    reason: no\n')
+    with pytest.raises(PolicyDenied):
+        guard("vdi", "pool_list")
+    # ...but not another skill's same old name with a different 2.0 name.
+    assert guard("avi", "pool_list").allowed
+
+
+def test_a_rule_written_with_a_2_0_name_is_not_reported_as_widened(tmp_path):
+    p = tmp_path / "rules.yaml"
+    p.write_text('deny:\n  - name: r\n    operations: ["delete_vm", "list_lb_pools"]\n    reason: no\n',
+                 encoding="utf-8")
+    eng = PolicyEngine(rules_path=p)
+    eng._load_rules()
+    assert eng.rename_widenings() == []
+
+
+def test_an_exact_name_that_is_old_somewhere_and_new_elsewhere_is_still_reported(tmp_path):
+    p = tmp_path / "rules.yaml"
+    p.write_text('deny:\n  - name: r\n    operations: ["list_vm_snapshots"]\n    reason: no\n', encoding="utf-8")
+    eng = PolicyEngine(rules_path=p)
+    eng._load_rules()
+    assert {(w["skill"], w["tool"]) for w in eng.rename_widenings()} >= {("aiops", "list_vm_snapshots")}

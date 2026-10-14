@@ -20,7 +20,7 @@ from rich.table import Table
 
 from vmware_policy import cli_local
 from vmware_policy.audit import get_engine
-from vmware_policy.renames import old_names, old_names_any_skill
+from vmware_policy.renames import old_names_any_skill, other_names
 
 
 def _harden_console_encoding() -> None:
@@ -296,7 +296,7 @@ def policy(
 
     # Same matching as guard(): a pre-2.0 name in a rule still applies (HLD §16
     # D-15). Without --skill, every skill's old names for this tool count.
-    aliases = old_names(skill, operation) if skill else old_names_any_skill(operation)
+    aliases = other_names(skill, operation) if skill else old_names_any_skill(operation)
     allowed = engine.check_allowed(operation, env=env, risk_level=risk, aliases=aliases)
 
     console.print(f"\n[bold]{operation}[/bold] (env={env or 'unset'}, risk={risk})")

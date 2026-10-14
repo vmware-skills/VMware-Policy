@@ -448,14 +448,20 @@ class PolicyEngine:
         name — is aiops/monitor's new one. Denying more is the safe direction,
         but the operator wrote neither, so each case is reported, not silent.
         """
-        from vmware_policy.renames import table  # local: renames is optional data
+        from vmware_policy.renames import new_names, old_names_all, table  # local: optional data
 
         out: list[dict[str, str]] = []
+        globs = set("*?[")
         for rule in self._rules.get("deny") or []:
             if not isinstance(rule, dict):
                 continue
             for pattern in rule.get("operations") or []:
                 if not isinstance(pattern, str):
+                    continue
+                # A rule that names a 2.0 tool exactly was written for 2.0 — not
+                # widened. Unless that exact name is also some skill's OLD name
+                # (vks' list_vm_snapshots), where the meaning did change.
+                if not (globs & set(pattern)) and pattern in new_names() and pattern not in old_names_all():
                     continue
                 for server, pairs in table().items():
                     for old, new in pairs.items():

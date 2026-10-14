@@ -1,3 +1,14 @@
+## v1.18.2 — deny rules match across the 2.0 rename in both directions
+
+* **A rule written with a 2.0 name now also refuses a 1.x skill calling the old name.** `~/.vmware/rules.yaml` is
+  shared by every install on the host. After an operator changed `vm_delete` to `delete_vm`, a still-1.x vmware-aiops
+  (calling `vm_delete`) was no longer refused. Policy now matches each rule against the tool's 2.0 name and its
+  pre-2.0 name in that skill, whichever one the caller used (`pool_list` stays per skill: AVI ↔ `list_lb_pools`,
+  VDI ↔ `list_desktop_pools`). A 1.x skill gets this once its environment has vmware-policy ≥ 1.18.2.
+* **No more "widened" warning for rules written with 2.0 names.** A rule naming a 2.0 tool exactly is not reported;
+  globs, and the one exact name whose meaning moved (`list_vm_snapshots`: vks' old name, aiops/monitor's new one), still
+  are. Found by the integration review of the 2.0 release.
+
 ## v1.18.1 — one rename corrected in the 2.0 table
 
 * vmware-debug's `case_timeline` is renamed to **`record_case_timeline`** in 2.0, not `get_case_timeline`: it
