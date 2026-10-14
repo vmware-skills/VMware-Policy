@@ -87,7 +87,7 @@
     "case_readiness": "get_case_readiness",
     "case_record_gap": "record_case_gap",
     "case_submit_evidence": "submit_case_evidence",
-    "case_timeline": "get_case_timeline",
+    "case_timeline": "record_case_timeline",
     "incident_timeline": "build_incident_timeline"
   },
   "vmware-log-insight": {

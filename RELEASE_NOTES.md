@@ -1,3 +1,10 @@
+## v1.18.1 — one rename corrected in the 2.0 table
+
+* vmware-debug's `case_timeline` is renamed to **`record_case_timeline`** in 2.0, not `get_case_timeline`: it
+  records the correlation into the case ledger (a write), and a `get_` name told agents and vmware-pilot it only
+  reads. The packaged rename table now matches, so a deny rule written as `case_timeline` keeps matching it.
+  Found before vmware-debug 2.0.0 shipped; no released skill used the wrong name.
+
 ## v1.18.0 — audit records the entry point; deny rules keep working across the 2.0 tool renames
 
 Backward compatible. Skills on 1.x keep working with it; the 2.0 skills require it.
