@@ -137,7 +137,10 @@ def _add_healthz(server: Any) -> None:
     routes = getattr(server, "_custom_starlette_routes", [])
     if any(getattr(r, "path", None) == HEALTHZ for r in routes):
         return
-    server.custom_route(HEALTHZ, methods=["GET", "HEAD"], include_in_schema=False)(_healthz)
+    # Both spellings answer directly: Starlette would otherwise redirect
+    # "/healthz/" to a Location built from the caller's Host header.
+    for path in (HEALTHZ, HEALTHZ + "/"):
+        server.custom_route(path, methods=["GET", "HEAD"], include_in_schema=False)(_healthz)
 
 
 def configure(server: Any, opts: ServeOptions) -> str:
@@ -247,7 +250,12 @@ def run(server: Any, opts: ServeOptions) -> None:
         "token and acts with this server's account.",
         file=sys.stderr,
     )
-    config: dict[str, Any] = {"host": opts.host, "port": opts.port, "log_level": "warning"}
+    config: dict[str, Any] = {
+        "host": opts.host,
+        "port": opts.port,
+        "log_level": "warning",
+        "server_header": False,  # no "server: uvicorn" on any response
+    }
     if opts.transport == "https":
         config.update(ssl_certfile=str(opts.certfile), ssl_keyfile=str(opts.keyfile))
     uvicorn.run(app, **config)

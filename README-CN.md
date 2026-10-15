@@ -176,7 +176,7 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
   也不校验 `Host`。其他所有路径都需要 token。
 - 每条审计记录都带上调用方的关联 ID：`traceparent` 头里的 trace-id，没有则取 `X-Request-ID`，再没有取
   `X-Correlation-ID`（只保留安全字符，最长 128）。`vmware-audit log --correlation-id ID` 可以查出平台上某一次请求
-  对应的记录。
+  对应的记录。这个 ID 由调用方提供，只用于关联追踪，不能作为证明。
 - **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
   按可以互相看到工作内容的人群，各开一个端点。
 

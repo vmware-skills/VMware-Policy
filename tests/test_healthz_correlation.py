@@ -167,3 +167,33 @@ def test_cli_log_filters_by_correlation_id(ops_home):  # noqa: F811
     assert out.exit_code == 0, out.output
     # Rich folds the tool column in a narrow console, so count rows instead.
     assert "(last 1 entries)" in out.output
+
+
+@pytest.mark.unit
+def test_healthz_with_a_trailing_slash_answers_without_a_redirect(ops_home):  # noqa: F811
+    tokens.create_token("alice")
+    server = _server()
+
+    async def flow(c):
+        return await c.get("/healthz/", headers={"Host": "evil:1"})
+
+    r = _run_app(server, flow)
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+    assert "location" not in {k.lower() for k in r.headers}
+
+
+@pytest.mark.unit
+def test_cli_export_filters_by_correlation_id(ops_home):  # noqa: F811
+    import json
+
+    from typer.testing import CliRunner
+
+    from vmware_policy.audit import AuditEngine
+    from vmware_policy.cli import app
+
+    engine = AuditEngine()
+    engine.log(skill="s", tool="wanted_tool", correlation_id="abc")
+    engine.log(skill="s", tool="other_tool", correlation_id="def")
+    out = CliRunner().invoke(app, ["export", "--correlation-id", "abc"])
+    assert out.exit_code == 0, out.output
+    assert [r["tool"] for r in json.loads(out.stdout)] == ["wanted_tool"]

@@ -157,9 +157,10 @@ def no_role_message(target: str, cli: str) -> str:
     text there, and the remedy is at the end.
     """
     return (
-        f"Logged in to '{target}', but vCenter shows no session for this account: it has no "
-        "vSphere role. Assign Read-Only or higher on the vCenter root (Global Permissions), "
-        f"then run '{cli} doctor'. A new password will not help."
+        f"Logged in to '{target}', but it shows no session for this account, which most likely "
+        "has no vSphere role. Assign Read-Only or higher at the root (vCenter: Global "
+        f"Permissions; ESXi: host Permissions), then run '{cli} doctor'. A new password will "
+        "not help."
     )
 
 

@@ -131,10 +131,15 @@ def export(
     skill: str | None = typer.Option(None, help="Filter by skill"),
     since: str | None = typer.Option(None, help="Export entries after date"),
     limit: int = typer.Option(10000, help="Max entries to export"),
+    correlation_id: str | None = typer.Option(
+        None,
+        "--correlation-id",
+        help="Only entries with this caller trace id (traceparent / X-Request-ID)",
+    ),
 ) -> None:
     """Export audit log as JSON to stdout."""
     engine = get_engine()
-    rows = engine.query(skill=skill, since=since, limit=limit)
+    rows = engine.query(skill=skill, since=since, limit=limit, correlation_id=correlation_id)
     json.dump(rows, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 

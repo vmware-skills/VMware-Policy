@@ -192,7 +192,7 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
   nothing else and accepts any `Host`. Every other path requires the token.
 - Each audit row records the caller's correlation id: the trace-id of a `traceparent` header, else `X-Request-ID`,
   else `X-Correlation-ID` (safe characters only, up to 128). `vmware-audit log --correlation-id ID` finds the rows
-  for one platform request.
+  for one platform request. The id is whatever the caller sends: it joins traces, it proves nothing.
 - **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
   at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
 
