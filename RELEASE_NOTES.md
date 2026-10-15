@@ -1,3 +1,26 @@
+## v1.21.0 — MCP over HTTPS: tokens, caller identity, concurrency (HLD §16)
+
+Every skill's MCP server can now serve the network: `<cli> mcp --transport https --cert C --key K --public-name N`
+(or `--transport http` on loopback behind a TLS-terminating proxy). stdio stays the default and is unchanged.
+
+* **Tokens.** `vmware-audit token create NAME` prints a token once and stores only its sha256 in
+  `$OPS_HOME/mcp-tokens` (0600); `token list`, `token revoke` (takes effect on the next request). Every network
+  request needs `Authorization: Bearer <token>`. Nothing binds without at least one token, plain `http` binds
+  loopback only, and Host/Origin must be one of `--public-name`.
+* **Fail closed.** Before binding, the server sends itself unauthenticated POST/GET/DELETE and refuses to start
+  unless all three get 401, so an SDK change cannot silently leave it open.
+* **Who called.** The audit `user` is `token:<name>` for network calls, and the surface is `mcp-https` /
+  `mcp-http-loopback`. The server's `VMWARE_AUDIT_RATIONALE` / `VMWARE_AUDIT_APPROVED_BY` are not stamped on
+  network callers' rows. Deny rules accept `clients: ["name-*"]`.
+* **Concurrency.** Sync tools run in worker threads on network transports. Calls naming the same target run one
+  at a time, different targets in parallel, and a call naming no target runs alone. A cancelled call frees its
+  target only after its worker finishes, and the release cannot be interrupted. The runaway breaker is per caller;
+  lifetime ceilings do not apply to a long-lived server.
+* **Thread safety.** Policy reloads and checks share a lock (a half-loaded `rules.yaml` could read as "allow
+  everything"); audit rotation is locked and never overwrites an existing archive.
+* Every caller of an endpoint acts with that server's account: tokens identify callers, they authorize nothing at
+  the platform. Run one endpoint per privilege level.
+
 ## v1.20.0 — tool exposure: offer only read tools, plus chosen write tools
 
 New module `vmware_policy.exposure` (HLD §17 D-16). Every skill's MCP server can now offer a subset of its tools,
