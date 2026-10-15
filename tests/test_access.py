@@ -268,3 +268,19 @@ def test_platform_text_is_sanitized():
     assert len(out["account"]) <= 300
     perm = out["direct_permissions"][0]
     assert len(perm["on"]) <= 300 and len(perm["role"]) <= 300
+
+
+@pytest.mark.unit
+def test_a_dead_link_does_not_cost_one_timeout_per_privilege():
+    am = FakeAM(set(), fail=ConnectionError("down"))
+    req = {f"tool{i}": [f"Priv.P{i}"] for i in range(40)}
+    out = vsphere_access_info(fake_si(am), target="vc1", requirements=req)
+    assert len(am.asked) <= 4  # the batch + at most 3 single asks
+    assert len(out["tools_undetermined"]) == 40
+
+
+@pytest.mark.unit
+def test_granted_meaning_does_not_claim_every_object():
+    from vmware_policy.access import _MEANING, GRANTED
+
+    assert "every object" not in _MEANING[GRANTED]

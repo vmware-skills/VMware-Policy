@@ -38,7 +38,8 @@ NO_PRIVILEGE = "no_platform_privilege_needed"
 
 _MEANING = {
     GRANTED: (
-        "The account holds every privilege this tool needs on the root folder, so on every object."
+        "The account holds every privilege this tool needs on the root folder. A permission set "
+        "directly on a specific object (for example NoAccess on a folder) still overrides it there."
     ),
     NOT_GRANTED: (
         "The account lacks these privileges on the root folder. They may still be granted on "
@@ -81,6 +82,9 @@ def _unknown_tool(tool: str, requirements: Mapping[str, Sequence[str] | None]) -
     )
 
 
+_GIVE_UP_AFTER = 3  # single asks that may all fail before the fallback stops
+
+
 def _ask(si: Any, session_key: str, privileges: list[str]) -> dict[str, bool]:
     answer = si.content.authorizationManager.HasPrivilegeOnEntities(
         entity=[si.content.rootFolder], sessionId=session_key, privId=privileges
@@ -105,6 +109,8 @@ def _privilege_states(
     except Exception:
         seen = {}
         for p in privileges:
+            if not seen and len(failed) >= _GIVE_UP_AFTER:
+                break  # nothing answers (a dead link): the rest stay undetermined
             try:
                 seen.update(_ask(si, session_key, [p]))
             except Exception as exc:  # the class name only: the text can name hosts
