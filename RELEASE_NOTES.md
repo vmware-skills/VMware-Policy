@@ -1,3 +1,24 @@
+## v1.20.0 — tool exposure: offer only read tools, plus chosen write tools
+
+New module `vmware_policy.exposure` (HLD §17 D-16). Every skill's MCP server can now offer a subset of its tools,
+chosen once at startup; the skills wire it into `<cli> mcp` in their next release.
+
+* `expose="read"` keeps only tools annotated `readOnlyHint: true`; `allow_write` keeps chosen write tools on top.
+  A tool without the annotation, or with a hint that is not exactly `true`, counts as a write.
+* Closed sets: an unknown `expose` value, an `allow_write` name that is not a write tool of that server, or
+  `allow_write` without `expose=read` stops the server before it serves (`apply_or_exit` exits 2 with the reason).
+  Pre-2.0 tool names are accepted through the 2.0 rename map.
+* One source decides the whole setting: the `mcp` command's flags if either is given, otherwise
+  `VMWARE_<SKILL>_MCP_EXPOSE` / `VMWARE_<SKILL>_MCP_ALLOW_WRITE`. A blank flag or an empty variable counts as not
+  given, so a templated `--allow-write ${WRITES}` with an empty value cannot drop `EXPOSE=read`.
+* The default (`expose="all"`) never touches the server object, so behaviour is unchanged for everyone who does not
+  opt in, including launchers that call `mcp.run` themselves.
+* `restrict_tools()` / `arestrict_tools()` give a launcher that imports a server object a public call instead of
+  editing the SDK's private tool registry (Storage#18). They use only `list_tools()` and `remove_tool()`.
+* This limits what clients are offered; it is **not** authorization. The account's permissions decide what a call
+  may change, deny rules still apply to every exposed tool, and a plan/workflow/batch tool carries every write it
+  can execute.
+
 ## v1.19.0 — `limit` is checked before any tool runs; three write tools get write verbs
 
 * **A `limit` below 1 is refused** for every MCP tool (`@vmware_tool`) and every guarded or audited CLI command,
