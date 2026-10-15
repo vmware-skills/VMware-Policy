@@ -219,3 +219,19 @@ def test_a_tool_decided_outside_vsphere_is_undetermined_not_granted():
     assert "namespace role" in out["tool"]["reason"]
     summary = vsphere_access_info(fake_si(FakeAM({"System.View"})), target="vc1", requirements=req)
     assert "create_tkc" in summary["tools_undetermined"]
+
+
+@pytest.mark.unit
+def test_one_privilege_the_host_does_not_define_leaves_the_others_answered():
+    class Picky(FakeAM):
+        def HasPrivilegeOnEntities(self, entity, sessionId, privId):  # noqa: N802,N803
+            if "Namespaces.Manage" in privId:
+                raise ValueError("InvalidArgument privId")
+            return super().HasPrivilegeOnEntities(entity, sessionId, privId)
+
+    req = {**REQ, "create_namespace": ["Namespaces.Manage"]}
+    out = vsphere_access_info(fake_si(Picky({"System.View"})), target="esx1", requirements=req)
+    assert out["privileges"]["System.View"] == "granted_at_root"
+    assert out["privileges"]["Namespaces.Manage"] == "undetermined"
+    assert out["tools_undetermined"] == ["create_namespace"]
+    assert "Namespaces.Manage" in out["reason"]

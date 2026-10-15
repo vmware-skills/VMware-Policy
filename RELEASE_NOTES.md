@@ -13,7 +13,9 @@
   account, what a tool needs (from the skill's requirements table) and whether the current session holds it on the
   root folder. `not_granted_at_root` is not reported as no access; a failed lookup is `undetermined`, and a
   summary with any undetermined tool says so rather than "granted". A table entry of `None` marks a tool decided by a permission
-  vSphere cannot report here (e.g. a Supervisor namespace role): always `undetermined`.
+  vSphere cannot report here (e.g. a Supervisor namespace role): always `undetermined`. If the target refuses the batch
+  (ESXi does not define vCenter-only privileges), each privilege is asked on its own, so only the ones it cannot
+  check become `undetermined`.
 * Every offloaded call now runs in a call scope. A returned iterator is drained inside it.
 * The per-skill config loader (`mtime_cached_loader`) checks and reloads under a lock, so concurrent first calls
   load once and cannot store a stale value.

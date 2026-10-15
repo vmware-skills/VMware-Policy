@@ -61,26 +61,45 @@ def _unknown_tool(tool: str, requirements: Mapping[str, Sequence[str] | None]) -
     )
 
 
+def _ask(si: Any, session_key: str, privileges: list[str]) -> dict[str, bool]:
+    answer = si.content.authorizationManager.HasPrivilegeOnEntities(
+        entity=[si.content.rootFolder], sessionId=session_key, privId=privileges
+    )
+    return {a.privId: bool(a.isGranted) for a in answer[0].privAvailability}
+
+
 def _privilege_states(
     si: Any, session_key: str, privileges: list[str]
 ) -> tuple[dict[str, str], str | None]:
+    """Ask in one batch; if the batch fails, ask per privilege.
+
+    A host that does not define one id (ESXi lacks vCenter-only privileges) may
+    refuse the whole batch; asking one at a time keeps the others answered and
+    marks only the ids that fail as undetermined.
+    """
     if not privileges:
         return {}, None
-    am = si.content.authorizationManager
+    failed: dict[str, str] = {}
     try:
-        answer = am.HasPrivilegeOnEntities(
-            entity=[si.content.rootFolder], sessionId=session_key, privId=privileges
-        )
-        seen = {a.privId: bool(a.isGranted) for a in answer[0].privAvailability}
-    except Exception as exc:  # the class name only: the text can name hosts
-        return {
-            p: UNDETERMINED for p in privileges
-        }, f"HasPrivilegeOnEntities failed ({type(exc).__name__})"
+        seen = _ask(si, session_key, privileges)
+    except Exception:
+        seen = {}
+        for p in privileges:
+            try:
+                seen.update(_ask(si, session_key, [p]))
+            except Exception as exc:  # the class name only: the text can name hosts
+                failed[p] = type(exc).__name__
     states = {
         p: (GRANTED if seen[p] else NOT_GRANTED) if p in seen else UNDETERMINED for p in privileges
     }
-    missing = [p for p, s in states.items() if s == UNDETERMINED]
-    reason = f"vCenter returned no answer for {', '.join(missing)}" if missing else None
+    parts = []
+    if failed:
+        names = ", ".join(f"{p} ({c})" for p, c in sorted(failed.items()))
+        parts.append(f"the target could not check {names}")
+    unanswered = [p for p, s in states.items() if s == UNDETERMINED and p not in failed]
+    if unanswered:
+        parts.append(f"no answer for {', '.join(unanswered)}")
+    reason = "HasPrivilegeOnEntities: " + "; ".join(parts) if parts else None
     return states, reason
 
 
