@@ -5,6 +5,7 @@ Rules are loaded from ``~/.vmware/rules.yaml`` with hot-reload on file change.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import threading
@@ -96,6 +97,18 @@ def _min_risk_index(min_risk: Any) -> int:
 # ── Rule loading with hot-reload ──────────────────────────────────────
 
 
+def _locked(method):
+    """Run an engine method under the engine's lock (re-entrant)."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+
 class PolicyEngine:
     """Evaluate operations against a YAML rule set.
 
@@ -103,6 +116,11 @@ class PolicyEngine:
     """
 
     def __init__(self, rules_path: Path | str | None = None) -> None:
+        # Reload and every read of the loaded state take this lock (HLD §16
+        # D-13(4)): with tools on worker threads, a check must never see a
+        # reload half-done — rules emptied but the load error not yet set reads
+        # as "no rules, allow everything".
+        self._lock = threading.RLock()
         self._path = Path(rules_path).expanduser() if rules_path else ops_path("rules.yaml")
         self._rules: dict[str, Any] = {}
         self._mtime: float = 0.0
@@ -115,6 +133,7 @@ class PolicyEngine:
         self._load_error: str | None = None
         self._load_rules()
 
+    @_locked
     def _load_rules(self) -> None:
         """Load the user's rules; fall back to the packaged baseline if absent.
 
@@ -242,6 +261,7 @@ class PolicyEngine:
         self._maybe_reload()
         return self._source
 
+    @_locked
     def _maybe_reload(self) -> None:
         """Hot-reload if file changed."""
         if not self._path.exists():
@@ -261,6 +281,7 @@ class PolicyEngine:
         except Exception:
             _log.warning("Failed to check policy rules file: %s", self._path, exc_info=True)
 
+    @_locked
     def has_environment_scoped_rules(self) -> bool:
         """Whether any deny rule is scoped by ``environments``.
 
@@ -276,6 +297,7 @@ class PolicyEngine:
         deny = self._rules.get("deny") or []
         return any(isinstance(rule, dict) and rule.get("environments") for rule in deny)
 
+    @_locked
     def check_allowed(
         self,
         operation: str,
@@ -431,6 +453,25 @@ class PolicyEngine:
             return False  # rule scoped to envs but target declares none → no match
         if envs and not any(self._pattern_match(e, env) for e in envs):
             return False
+
+        # Match by network caller (HLD §16 D-12): `clients: [alice, "ops-*"]` names
+        # bearer-token names. A guardrail on top of RBAC, never a replacement. A
+        # call with no network caller (stdio, CLI) is not matched by a rule
+        # scoped to clients, the same way an unlabelled target is not matched by
+        # an environment-scoped rule.
+        clients = rule.get("clients", [])
+        if isinstance(clients, str):
+            clients = [clients]  # `clients: bob` would otherwise match per character
+        elif clients and not isinstance(clients, list):
+            # A value we cannot read must not quietly disable the rule.
+            return True
+        if clients:
+            from vmware_policy.caller import current_caller
+
+            caller = current_caller()
+            name = caller[len("token:"):] if caller and caller.startswith("token:") else None
+            if name is None or not any(self._pattern_match(c, name) for c in clients):
+                return False
 
         # Match by risk level (minimum)
         min_risk = rule.get("min_risk_level")

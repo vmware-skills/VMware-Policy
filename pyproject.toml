@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vmware-policy"
-version = "1.20.0"
+version = "1.21.0"
 description = "Unified audit logging, policy enforcement, and sanitization for VMware MCP skills"
 readme = "README.md"
 license = "MIT"
@@ -21,6 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    # serve() and the token verifier are exercised against the real SDK; the
+    # skills bring mcp at runtime, so it stays out of the core dependencies.
+    "mcp[cli]>=1.28,<2.0",
     "pytest>=8.0,<10.0",
     "pytest-cov>=5.0,<8.0",
     "ruff>=0.5,<1.0",

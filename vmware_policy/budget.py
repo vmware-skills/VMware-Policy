@@ -31,6 +31,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from vmware_policy.caller import current_caller
 from vmware_policy.policy import PolicyResult
 
 __all__ = ["BudgetExceeded", "BudgetTracker", "get_budget", "reset_budget"]
@@ -95,7 +96,23 @@ class BudgetTracker:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._state = _State()
+        self._state = _State()  # this process's own caller (stdio, CLI)
+        # Network callers (HLD §16 D-13(3)): one state each, so one caller's
+        # loop never trips another, and no lifetime ceiling spans them all.
+        self._callers: dict[str, _State] = {}
+
+    def _state_for(self, caller: str | None) -> _State:
+        if caller is None:
+            return self._state
+        state = self._callers.get(caller)
+        if state is None:
+            state = self._callers[caller] = _State()
+        return state
+
+    def tracked_fingerprints(self, caller: str | None = None) -> int:
+        """How many argument fingerprints the breaker holds for ``caller`` (introspection)."""
+        with self._lock:
+            return len(self._state_for(caller).windows)
 
     # ── Limits (read live from env) ───────────────────────────────────
 
@@ -127,12 +144,17 @@ class BudgetTracker:
         """
         now = time.time()
         fp = _fingerprint(tool, params)
+        caller = current_caller()
         with self._lock:
+            state = self._state_for(caller)
+            # Lifetime ceilings are a per-session budget. A network server is
+            # long-lived and serves many callers, so they do not apply there ([H5]).
+            lifetime = caller is None
             # 1. Hard call ceiling
-            max_calls = self._max_calls()
-            if max_calls is not None and self._state.total_calls >= max_calls:
+            max_calls = self._max_calls() if lifetime else None
+            if max_calls is not None and state.total_calls >= max_calls:
                 raise BudgetExceeded(
-                    f"Tool-call budget reached: {self._state.total_calls} calls "
+                    f"Tool-call budget reached: {state.total_calls} calls "
                     f"(VMWARE_MAX_TOOL_CALLS={max_calls}). Stop and summarize what "
                     f"is done; raise the ceiling only if the work genuinely needs "
                     f"more calls.",
@@ -140,11 +162,11 @@ class BudgetTracker:
                 )
 
             # 2. Hard wall-time ceiling (cumulative across all tool calls)
-            max_seconds = self._max_seconds()
-            if max_seconds is not None and self._state.total_seconds >= max_seconds:
+            max_seconds = self._max_seconds() if lifetime else None
+            if max_seconds is not None and state.total_seconds >= max_seconds:
                 raise BudgetExceeded(
                     f"Cumulative tool wall-time budget reached: "
-                    f"{self._state.total_seconds:.0f}s "
+                    f"{state.total_seconds:.0f}s "
                     f"(VMWARE_MAX_TOOL_SECONDS={max_seconds}). Stop and report "
                     f"progress rather than continuing.",
                     rule="budget_seconds",
@@ -154,11 +176,15 @@ class BudgetTracker:
             runaway_max = self._runaway_max()
             window = self._runaway_window()
             if runaway_max > 0 and window > 0:
-                dq = self._state.windows.get(fp)
+                cutoff = now - window
+                # Evict windows with nothing left in range: a long-lived server
+                # sees endless distinct arguments, and kept them all forever.
+                for key in [k for k, q in state.windows.items() if not q or q[-1] < cutoff]:
+                    del state.windows[key]
+                dq = state.windows.get(fp)
                 if dq is None:
                     dq = deque()
-                    self._state.windows[fp] = dq
-                cutoff = now - window
+                    state.windows[fp] = dq
                 while dq and dq[0] < cutoff:
                     dq.popleft()
                 if len(dq) >= runaway_max:
@@ -172,14 +198,15 @@ class BudgetTracker:
                     )
                 dq.append(now)
 
-            self._state.total_calls += 1
+            state.total_calls += 1
 
     def add_duration(self, seconds: float) -> None:
         """Accumulate a completed call's wall-time toward the time ceiling."""
         if seconds <= 0:
             return
+        caller = current_caller()
         with self._lock:
-            self._state.total_seconds += seconds
+            self._state_for(caller).total_seconds += seconds
 
     def snapshot(self) -> dict:
         """Return a copy of current counters (for CLI / introspection / tests)."""

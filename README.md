@@ -162,6 +162,35 @@ the exposure hides.
 This limits what clients are offered. It is not authorization: the account's permissions decide what a call may
 change, and deny rules still apply to every exposed tool.
 
+## Serving MCP over HTTPS
+
+`vmware_policy.serve` runs a skill's MCP server on stdio (default), on HTTPS, or on loopback HTTP behind a
+TLS-terminating reverse proxy. Both network transports require bearer tokens; nothing binds without one.
+
+```bash
+vmware-audit token create alice      # prints the token once; only its sha256 is stored (0600)
+vmware-audit token list
+vmware-audit token revoke alice      # running servers refuse it from the next request
+```
+
+- Tokens live in `$OPS_HOME/mcp-tokens` (default `~/.vmware`). Clients send `Authorization: Bearer <token>`.
+- `https` needs `--cert`/`--key` (PEM) and `--public-name` for every host name clients use; requests for any other
+  Host or Origin are refused (DNS-rebinding protection). `http` binds 127.0.0.1/::1/localhost only.
+- Each audit row records the caller as `token:<name>` and the surface (`mcp-https`, `mcp-http-loopback`).
+- Calls naming the same `target` run one at a time; calls naming different targets run in parallel; a call that
+  names no target (the skill's default target, or a tool without a `target` parameter) runs alone. Waiting calls
+  are served first come, first served, so neither kind can starve the other; to get parallelism, name the target.
+  The runaway breaker is per caller.
+- A session can only be used by the token name that created it (the SDK enforces this). Revoking a token and
+  creating a new one under the same name lets the new token continue the old sessions, so use a new name when a
+  token leaks. Idle sessions expire after 30 minutes.
+- Deny rules can name callers: `clients: ["intern-*"]` in `$OPS_HOME/rules.yaml` matches those token names only
+  (stdio and CLI calls are not matched by such a rule).
+- Before it binds, the server sends itself unauthenticated POST/GET/DELETE requests and refuses to start unless
+  all three get 401.
+- **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
+  at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
+
 ## Risk levels
 
 The level a tool declares is recorded in the audit row, can be matched by a

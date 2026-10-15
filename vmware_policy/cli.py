@@ -306,6 +306,78 @@ def policy(
 
     console.print(f"  [green]allowed[/] (rule: {allowed.rule})")
 
+token_app = typer.Typer(
+    help="Bearer tokens for MCP servers on --transport https/http (one per caller).",
+    no_args_is_help=True,
+)
+app.add_typer(token_app, name="token")
+
+
+@token_app.command("create")
+@cli_local("writes a token hash to the local token file")
+def token_create(
+    name: str,
+    token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
+) -> None:
+    """Create a token NAME; the secret is printed once and never stored."""
+    from pathlib import Path
+
+    from vmware_policy.tokens import TokenError, create_token, token_file
+
+    path = Path(token_file_opt).expanduser() if token_file_opt else token_file()
+    try:
+        secret = create_token(name, path)
+    except TokenError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(secret)
+    typer.echo(
+        f"Token '{name}' created in {path}. Copy it now: it is not stored and cannot be "
+        f"shown again. Clients send it as 'Authorization: Bearer <token>'; audit rows record "
+        f"'token:{name}'.",
+        err=True,
+    )
+
+
+@token_app.command("list")
+@cli_local("reads token names from the local token file")
+def token_list(
+    token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
+) -> None:
+    """List token names (secrets are not stored)."""
+    from pathlib import Path
+
+    from vmware_policy.tokens import TokenError, list_tokens
+
+    try:
+        names = list_tokens(Path(token_file_opt).expanduser() if token_file_opt else None)
+    except TokenError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    for name in names:
+        typer.echo(name)
+    if not names:
+        typer.echo("No tokens. Create one with 'vmware-audit token create NAME'.", err=True)
+
+
+@token_app.command("revoke")
+@cli_local("removes a token hash from the local token file")
+def token_revoke(
+    name: str,
+    token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
+) -> None:
+    """Revoke token NAME; running servers refuse it from their next request."""
+    from pathlib import Path
+
+    from vmware_policy.tokens import TokenError, revoke_token
+
+    try:
+        revoke_token(name, Path(token_file_opt).expanduser() if token_file_opt else None)
+    except TokenError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"Token '{name}' revoked.", err=True)
 
 if __name__ == "__main__":
     app()
+

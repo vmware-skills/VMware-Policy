@@ -355,6 +355,13 @@ def test_every_text_read_in_the_package_declares_utf8():
             )
             if name not in ("open", "read_text", "write_text"):
                 continue
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+                and func.attr == "open"
+            ):
+                continue  # os.open returns a file descriptor; no codec involved
             mode = ""
             for kw in node.keywords:
                 if kw.arg == "mode" and isinstance(kw.value, ast.Constant):

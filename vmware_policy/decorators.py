@@ -382,8 +382,14 @@ class _CallState:
         # Self-attested audit enrichment, not authorization (HLD §8.3): sourced
         # from env so an approval workflow / pilot can inject context without
         # changing every tool signature.
-        self.rationale = os.environ.get("VMWARE_AUDIT_RATIONALE", "")
-        self.approved_by = os.environ.get("VMWARE_AUDIT_APPROVED_BY", "")
+        # Not for network callers (HLD §16 D-12): the server's environment is
+        # one value shared by every caller, so stamping it on their rows would
+        # attribute one person's rationale or approval to everyone.
+        from vmware_policy.caller import current_caller
+
+        network = current_caller() is not None
+        self.rationale = "" if network else os.environ.get("VMWARE_AUDIT_RATIONALE", "")
+        self.approved_by = "" if network else os.environ.get("VMWARE_AUDIT_APPROVED_BY", "")
 
 
 def _bind_params(

@@ -149,6 +149,32 @@ mcp.run(transport="streamable-http")
 
 这只决定向客户端提供哪些工具，**不是授权**：一次调用能改什么由账号权限决定，deny 规则对所有暴露出来的工具照样生效。
 
+## 通过 HTTPS 提供 MCP
+
+`vmware_policy.serve` 可以让 skill 的 MCP server 跑在 stdio（默认）、HTTPS，或者跑在本机 HTTP 上、由前面负责 TLS 的
+反向代理转发。两种网络方式都必须先有 bearer token，没有 token 就不会绑定端口。
+
+```bash
+vmware-audit token create alice      # token 只显示这一次；文件里只存 sha256（权限 0600）
+vmware-audit token list
+vmware-audit token revoke alice      # 正在运行的 server 从下一个请求起就拒绝它
+```
+
+- token 存在 `$OPS_HOME/mcp-tokens`（默认 `~/.vmware`）。客户端发送 `Authorization: Bearer <token>`。
+- `https` 需要 `--cert`/`--key`（PEM），以及客户端访问时用到的每一个主机名 `--public-name`；其他 Host 或 Origin 的请求
+  一律拒绝（防 DNS 重绑定）。`http` 只能绑定 127.0.0.1、::1 或 localhost。
+- 每条审计记录都写明调用者 `token:<名字>` 和接入方式（`mcp-https`、`mcp-http-loopback`）。
+- 写明同一个 `target` 的调用依次执行，写明不同 target 的调用并行；没有写 target 的调用（即用 skill 的默认 target，
+  或工具本身没有 `target` 参数）独占执行。等待中的调用按先来先服务处理，哪一类都不会把另一类饿死；想要并行，
+  请写明 target。失控熔断按调用者分别计算。
+- 一个会话只能由创建它的那个 token 名字使用（由 SDK 保证）。吊销一个 token 后用同样的名字新建，新 token 可以接着用
+  旧会话，所以 token 泄露时请换一个新名字。空闲会话 30 分钟后过期。
+- deny 规则可以按调用者限定：在 `$OPS_HOME/rules.yaml` 里写 `clients: ["intern-*"]`，只对这些 token 名字生效
+  （stdio 和 CLI 调用不受这类规则影响）。
+- 绑定端口之前，server 会先向自己发送不带 token 的 POST/GET/DELETE 请求，三个都得到 401 才会启动。
+- **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
+  按可以互相看到工作内容的人群，各开一个端点。
+
 ## 风险等级
 
 工具声明的等级会写入审计行，可被 deny 规则的 `min_risk_level` 匹配，并决定已配置的

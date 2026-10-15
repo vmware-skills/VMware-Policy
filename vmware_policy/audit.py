@@ -6,7 +6,6 @@ Framework-agnostic: works with Claude, Codex, local agents, or any MCP client.
 
 from __future__ import annotations
 
-import getpass
 import json
 import logging
 import os
@@ -84,6 +83,8 @@ class AuditEngine:
         else:
             self._path = _DEFAULT_DB or ops_path("audit.db")
         self._ok = False
+        #: One rotation at a time per process (HLD §16 D-13(4) [M2]).
+        self._rotate_lock = threading.Lock()
         #: Guards ``lost_rows``: one MCP server can lose rows on several threads.
         self._lost_lock = threading.Lock()
         #: Rows this process could not write. Every loss also prints one line to
@@ -250,34 +251,46 @@ class AuditEngine:
                 return
             if self._path.stat().st_size < _MAX_DB_SIZE_BYTES:
                 return
-            archive_name = self._path.with_suffix(
-                f".{datetime.now(tz=timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
-            )
-            # Checkpoint the WAL into the main file before renaming, otherwise
-            # un-checkpointed rows in audit.db-wal are silently lost (the
-            # sidecars belong to the OLD path and never follow the archive).
-            try:
-                conn = self._connect()
-                try:
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                finally:
-                    conn.close()
-            except Exception:
-                _log.warning("WAL checkpoint before rotation failed", exc_info=True)
-            self._path.rename(archive_name)
-            # Drop now-stale sidecars (empty after a successful checkpoint).
-            for suffix in ("-wal", "-shm"):
-                sidecar = self._path.with_name(self._path.name + suffix)
-                try:
-                    sidecar.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            self._init_db()
-            self._harden_permissions()
-            self._cleanup_archives()
-            _log.info("Audit DB rotated → %s", archive_name.name)
+            with self._rotate_lock:
+                self._rotate_locked()
         except Exception:
             _log.warning("Audit DB rotation failed", exc_info=True)
+
+    def _rotate_locked(self) -> None:
+        # Re-check under the lock: another thread may have just rotated.
+        if not self._path.exists() or self._path.stat().st_size < _MAX_DB_SIZE_BYTES:
+            return
+        stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+        archive_name = self._path.with_suffix(f".{stamp}.db")
+        n = 1
+        # Never replace an existing archive: Path.rename overwrites silently on
+        # POSIX, and a second rotation in the same second would bury the first.
+        while archive_name.exists():
+            archive_name = self._path.with_suffix(f".{stamp}-{n}.db")
+            n += 1
+        # Checkpoint the WAL into the main file before renaming, otherwise
+        # un-checkpointed rows in audit.db-wal are silently lost (the
+        # sidecars belong to the OLD path and never follow the archive).
+        try:
+            conn = self._connect()
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                conn.close()
+        except Exception:
+            _log.warning("WAL checkpoint before rotation failed", exc_info=True)
+        self._path.rename(archive_name)
+        # Drop now-stale sidecars (empty after a successful checkpoint).
+        for suffix in ("-wal", "-shm"):
+            sidecar = self._path.with_name(self._path.name + suffix)
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._init_db()
+        self._harden_permissions()
+        self._cleanup_archives()
+        _log.info("Audit DB rotated → %s", archive_name.name)
 
     def _cleanup_archives(self) -> None:
         """Keep only the most recent N archive files."""
@@ -380,10 +393,10 @@ class AuditEngine:
 # ── Module-level helpers ──────────────────────────────────────────────
 
 def _current_user() -> str:
-    try:
-        return getpass.getuser()
-    except Exception:
-        return "unknown"
+    # The network caller when there is one (HLD §16 D-12), else the OS user.
+    from vmware_policy.caller import audit_user
+
+    return audit_user()
 
 
 def _safe_json(obj: Any) -> str:
