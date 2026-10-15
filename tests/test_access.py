@@ -113,7 +113,8 @@ def test_an_unknown_tool_is_refused_with_close_names():
 def test_without_a_tool_every_tool_is_summarized():
     am = FakeAM({"System.View"})
     out = vsphere_access_info(fake_si(am), target="vc1", requirements=REQ)
-    assert out["tools_granted_at_root"] == ["get_local_thing", "list_vms"]
+    assert out["tools_granted_at_root"] == ["list_vms"]
+    assert out["tools_no_privilege_needed"] == ["get_local_thing"]
     assert out["tools_not_granted_at_root"] == ["power_on_vm"]
     assert out["tools_undetermined"] == []
     assert out["privileges"] == {
@@ -168,3 +169,32 @@ def test_permissions_that_cannot_be_read_are_reported_as_unread():
     out = vsphere_access_info(fake_si(NoPerms({"System.View"})), target="vc1", requirements=REQ)
     assert out["direct_permissions"] is None
     assert "PermissionError" in out["direct_permissions_note"]
+
+
+@pytest.mark.unit
+def test_a_summary_with_undetermined_tools_does_not_say_granted():
+    am = FakeAM(set(), fail=RuntimeError("x"))
+    out = vsphere_access_info(fake_si(am), target="vc1", requirements=REQ)
+    assert out["tools_undetermined"] == ["list_vms", "power_on_vm"]
+    assert out["tools_granted_at_root"] == []
+    assert "unknown" in out["meaning"]
+
+
+@pytest.mark.unit
+def test_an_unreadable_permission_object_does_not_leak_or_fail():
+    class Hidden:
+        _moId = "vm-42"  # noqa: N815 (pyVmomi's attribute name)
+
+        @property
+        def name(self):
+            raise PermissionError("NoPermission on vm-42 at vc01.corp.example")
+
+    perms = [
+        SimpleNamespace(
+            principal="VSPHERE.LOCAL\\svc-mcp", roleId=-5, entity=Hidden(), propagate=False
+        )
+    ]
+    am = FakeAM({"System.View"}, perms=perms, roles=[SimpleNamespace(roleId=-5, name="NoAccess")])
+    out = vsphere_access_info(fake_si(am), target="vc1", requirements=REQ, tool="list_vms")
+    assert out["direct_permissions"] == [{"role": "NoAccess", "on": "vm-42", "propagate": False}]
+    assert "corp.example" not in str(out)

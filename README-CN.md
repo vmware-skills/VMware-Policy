@@ -178,11 +178,11 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 ## 会话池
 
 连接平台的 skill 可以为每个 target 维护一个小的会话池（`vmware_policy.pool.SessionPool`，`VMWARE_MCP_POOL_SIZE`，
-默认 2），并用 `run_server(..., pooled=True)` 启动 server。通过网络方式访问时，每个调用在整个执行过程中（包括结果
-序列化）独占自己在每个 target 上的会话，所以同一 target 的调用可以并行，最多到池的大小；没有写 target 的调用也不再
+默认 2），并用 `run_server(..., pooled=True)` 启动 server。通过网络方式访问时，每个调用在整个执行过程中独占自己在每个 target 上的会话
+（工具返回的是普通数据，返回之后不再从会话读取任何东西），所以同一 target 的调用可以并行，最多到池的大小；没有写 target 的调用也不再
 逐个执行。已经持有会话的调用不会等待另一个 target：那个 target 的池满时，它会拿到一个临时的额外会话，所以跨 target
 的调用不会死锁。等会话超过 300 秒的调用会收到一条写明 target 的错误。每个会话都是 target 上的一次登录。stdio 和 CLI
-仍然每个 target 缓存一个会话。
+仍然每个 target 缓存一个会话，与池里的会话分开。
 
 ## 权限自诊断
 

@@ -1,18 +1,19 @@
 ## v1.22.0 — session pools and access self-diagnosis (HLD §16 D-13(2), §17 D-17)
 
 * **Session pools.** `vmware_policy.pool.SessionPool` keeps up to `VMWARE_MCP_POOL_SIZE` (default 2) sessions per
-  target. Over a network transport each call holds its own session per target for its whole body, result
-  serialization included (pyVmomi reads properties lazily). A call that already holds a session never waits for
+  target. Over a network transport each call holds its own session per target for its whole body; tools return
+  plain data, so nothing reads the session after the call. A call that already holds a session never waits for
   another target — it gets a temporary extra session instead — so multi-target calls cannot deadlock; a call that
   waits more than 300 s gets an error naming the target. Outside a call (CLI, stdio) one cached session per target,
-  as before. Sessions are compared by identity: pyVmomi ServiceInstances all compare equal.
+  as before, kept apart from the pooled ones so it is never handed to a call. Sessions are compared by identity: pyVmomi ServiceInstances all compare equal.
 * **`run_server(..., pooled=True)`.** A skill whose connections come from a pool declares it; its calls on one
   target then run side by side up to the pool size, and calls naming no target are no longer serialized. Skills
   that do not declare it keep the 1.21.0 per-target gate.
 * **`vmware_policy.access.vsphere_access_info`** for each vSphere skill's `get_access_info` tool: the target's
   account, what a tool needs (from the skill's requirements table) and whether the current session holds it on the
-  root folder. `not_granted_at_root` is not reported as no access; a failed lookup is `undetermined`.
-* Every offloaded call now runs in a call scope and its result is serialized in the worker thread.
+  root folder. `not_granted_at_root` is not reported as no access; a failed lookup is `undetermined`, and a
+  summary with any undetermined tool says so rather than "granted".
+* Every offloaded call now runs in a call scope.
 
 ## v1.21.0 — MCP over HTTPS: tokens, caller identity, concurrency (HLD §16)
 

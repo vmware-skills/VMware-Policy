@@ -102,15 +102,28 @@ def _direct_permissions(si: Any, user: str) -> tuple[list[dict[str, Any]] | None
             f"Could not read permissions ({type(exc).__name__}); "
             "the privilege check still applies.",
         )
-    listed = [
+    return [
         {
             "role": roles.get(p.roleId, str(p.roleId)),
-            "on": getattr(p.entity, "name", None) or str(p.entity),
+            "on": _entity_label(p.entity),
             "propagate": bool(p.propagate),
         }
         for p in perms
-    ]
-    return listed, note
+    ], note
+
+
+def _entity_label(entity: Any) -> str:
+    """The object's name, or its managed-object id when the name cannot be read.
+
+    Reading ``name`` is a round trip and can raise (NoPermission on an object the
+    account may not see, e.g. a NoAccess grant); its text names hosts, so only
+    the local moId is used then.
+    """
+    try:
+        name = entity.name
+    except Exception:
+        name = None
+    return name or str(getattr(entity, "_moId", None) or "unknown object")
 
 
 def vsphere_access_info(
@@ -171,14 +184,24 @@ def vsphere_access_info(
             info["reason"] = reason or "No answer for this tool's privileges."
         out["tool"] = info
     else:
-        by: dict[str, list[str]] = {GRANTED: [], NOT_GRANTED: [], UNDETERMINED: []}
+        by: dict[str, list[str]] = {
+            GRANTED: [],
+            NOT_GRANTED: [],
+            UNDETERMINED: [],
+            NO_PRIVILEGE: [],
+        }
         for name in sorted(requirements):
-            v = _verdict(requirements[name], states)
-            by[GRANTED if v == NO_PRIVILEGE else v].append(name)
+            by[_verdict(requirements[name], states)].append(name)
         out["tools_granted_at_root"] = by[GRANTED]
         out["tools_not_granted_at_root"] = by[NOT_GRANTED]
         out["tools_undetermined"] = by[UNDETERMINED]
-        out["meaning"] = _MEANING[NOT_GRANTED] if by[NOT_GRANTED] else _MEANING[GRANTED]
+        out["tools_no_privilege_needed"] = by[NO_PRIVILEGE]
+        if by[UNDETERMINED]:
+            out["meaning"] = _MEANING[UNDETERMINED]
+        elif by[NOT_GRANTED]:
+            out["meaning"] = _MEANING[NOT_GRANTED]
+        else:
+            out["meaning"] = _MEANING[GRANTED]
 
     if session is not None and out["account"]:
         out["direct_permissions"], out["direct_permissions_note"] = _direct_permissions(

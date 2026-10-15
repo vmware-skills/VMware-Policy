@@ -365,3 +365,60 @@ def test_a_failed_extra_session_does_not_free_a_pooled_slot():
         p.get("vc1")
     release.set()
     t.join(5)
+
+
+@pytest.mark.unit
+def test_the_unscoped_session_is_never_handed_to_a_call():
+    p, made = make_pool(size=1, wait_timeout=0.2)
+    shared = p.get("vc1")
+    with call_scope():
+        scoped = p.get("vc1")
+    assert scoped is not shared
+    assert p.get("vc1") is shared
+
+
+@pytest.mark.unit
+def test_an_interrupted_probe_frees_the_slot():
+    p, made = make_pool(size=1, wait_timeout=0.2)
+    with call_scope():
+        s = p.get("vc1")
+    boom = {"on": True}
+
+    def probe(sess):
+        if boom["on"]:
+            boom["on"] = False
+            raise KeyboardInterrupt
+        return True
+
+    p._is_alive = probe
+    with call_scope(), pytest.raises(KeyboardInterrupt):
+        p.get("vc1")
+    with call_scope():
+        assert p.get("vc1") is not None  # not wedged
+    assert s.closed
+
+
+@pytest.mark.unit
+def test_a_shared_session_created_across_a_discard_is_not_kept():
+    started, go = threading.Event(), threading.Event()
+    made: list[FakeSession] = []
+
+    def create(key: str) -> FakeSession:
+        s = FakeSession(key)
+        made.append(s)
+        if len(made) == 1:
+            started.set()
+            go.wait(5)
+        return s
+
+    p = SessionPool(
+        "t", create=create, is_alive=lambda s: s.alive, close=lambda s: setattr(s, "closed", True)
+    )
+    got: list = []
+    t = threading.Thread(target=lambda: got.append(p.get("vc1")))
+    t.start()
+    started.wait(5)
+    p.discard("vc1")
+    go.set()
+    t.join(5)
+    assert made[0].closed and got[0] is made[1]

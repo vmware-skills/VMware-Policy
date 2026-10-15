@@ -196,11 +196,11 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
 A skill that connects to a platform can keep a small pool of sessions per target
 (`vmware_policy.pool.SessionPool`, `VMWARE_MCP_POOL_SIZE`, default 2) and start its server with
 `run_server(..., pooled=True)`. Over a network transport each call then holds its own session per target for its whole
-body (result serialization included), so calls on one target run side by side up to the pool size and calls that
+body (tools return plain data, so nothing is read from the session after it), so calls on one target run side by side up to the pool size and calls that
 name no target are not serialized. A call that already holds a session never waits for another target; if that
 target's pool is busy it gets a temporary extra session, so multi-target calls cannot deadlock. A call that waits
 longer than 300 s for a session gets an error naming the target. Each session is a login on the target. stdio and
-the CLI keep one cached session per target.
+the CLI keep one cached session per target, separate from the pooled ones.
 
 ## Access self-diagnosis
 

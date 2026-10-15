@@ -14,9 +14,14 @@ token in place), so a call **holds** a session for its whole body:
 * A call that already holds a session never waits: if the target's pool is full
   it gets a temporary extra session, closed when the call ends. Two calls taking
   two targets in opposite order therefore cannot deadlock.
-* Outside a call scope (the CLI, stdio, tests) ``get`` returns the target's
-  cached session, as the one-session-per-target managers did — those callers
-  are sequential.
+* Outside a call scope (the CLI, stdio, tests) ``get`` returns the target's one
+  dedicated unscoped session, as the one-session-per-target managers did — those
+  callers are sequential. It is never one of the pooled sessions, so it is never
+  handed to a call. A thread a tool starts itself does not inherit the scope
+  (ContextVars do not follow into a ThreadPoolExecutor) and would share that
+  session: a tool that fans out must run each branch in ``contextvars.copy_context()``.
+* Extra sessions are not capped: at most one per target per running call. Each
+  waiting call occupies a worker thread until it is served or times out.
 
 Every checkout probes the session (``is_alive``); a dead one is closed and
 replaced. :meth:`discard` closes a target's idle sessions now and its busy ones
@@ -141,6 +146,7 @@ class SessionPool(Generic[S]):
         self._close = close
         self._cond = threading.Condition()
         self._idle: dict[str, list[tuple[S, int]]] = {}
+        self._shared: dict[str, tuple[S, int]] = {}  # unscoped callers (CLI, stdio)
         self._count: dict[str, int] = {}  # pooled sessions that exist (idle + checked out)
         self._generation: dict[str, int] = {}
 
@@ -158,7 +164,7 @@ class SessionPool(Generic[S]):
     def keys(self) -> list[str]:
         """Targets with at least one open session."""
         with self._cond:
-            return sorted(k for k, n in self._count.items() if n)
+            return sorted({k for k, n in self._count.items() if n} | set(self._shared))
 
     def discard(self, key: str) -> None:
         """Close the target's idle sessions now and its busy ones when their calls end."""
@@ -167,8 +173,9 @@ class SessionPool(Generic[S]):
             idle = self._idle.pop(key, [])
             self._count[key] = self._count.get(key, 0) - len(idle)
             self._prune(key)
+            shared = self._shared.pop(key, None)
             self._cond.notify_all()
-        for session, _ in idle:
+        for session, _ in idle + ([shared] if shared else []):
             self._safe_close(session)
 
     def close_all(self) -> None:
@@ -193,41 +200,30 @@ class SessionPool(Generic[S]):
         except Exception:
             return False
 
-    def _new(self, key: str) -> S:
-        """Create a session for a slot already counted; free the slot if that fails."""
-        try:
-            return self._create(key)
-        except BaseException:
-            with self._cond:
-                self._count[key] = self._count.get(key, 0) - 1
-                self._prune(key)
-                self._cond.notify_all()
-            raise
-
     def _get_shared(self, key: str) -> S:
+        """The key's dedicated unscoped session: never one of the pooled sessions calls hold."""
         with self._cond:
-            idle = self._idle.get(key)
-            if idle:
-                session, gen = idle[-1]
-            else:
-                self._count[key] = self._count.get(key, 0) + 1
-                session = None
-        if session is not None:
+            entry = self._shared.get(key)
+        if entry is not None:
+            session, gen = entry
             if self._alive(session):
                 return session
             with self._cond:
-                # By identity: pyVmomi ServiceInstances all compare equal (__eq__
-                # looks at the moId only), so `in` / `remove` would pick any of them.
-                entries = self._idle.get(key, [])
-                at = next((i for i, (s, _) in enumerate(entries) if s is session), None)
-                if at is not None:
-                    del entries[at]  # the slot stays counted: the replacement takes it
-                else:  # someone else took or replaced it meanwhile; take a new slot
-                    self._count[key] = self._count.get(key, 0) + 1
+                if self._shared.get(key, (None,))[0] is session:
+                    del self._shared[key]
             self._safe_close(session)
-        session = self._new(key)
-        with self._cond:
-            self._idle.setdefault(key, []).append((session, self._generation.get(key, 0)))
+        while True:
+            with self._cond:
+                gen = self._generation.get(key, 0)
+            session = self._create(key)
+            with self._cond:
+                if self._generation.get(key, 0) == gen:
+                    old = self._shared.get(key)
+                    self._shared[key] = (session, gen)
+                    break
+            self._safe_close(session)  # discard() ran while it was being created
+        if old is not None and old[0] is not session:
+            self._safe_close(old[0])  # another thread replaced it at the same time
         return session
 
     def _checkout(self, key: str, lease: _Lease) -> S:
@@ -256,16 +252,23 @@ class SessionPool(Generic[S]):
                         f"{POOL_SIZE_ENV} on the server (each session is a login on the target)."
                     )
                 self._cond.wait(remaining)
-        if session is not None and not self._alive(session):
-            self._safe_close(session)
-            with self._cond:  # its slot is reused by the replacement below
-                gen = self._generation.get(key, 0)
-            session = None
-        if session is None:
-            if extra:
+        try:
+            if session is not None and not self._alive(session):
+                self._safe_close(session)
+                with self._cond:  # its slot is reused by the replacement below
+                    gen = self._generation.get(key, 0)
+                session = None
+            if session is None:
                 session = self._create(key)
-            else:
-                session = self._new(key)
+        except BaseException:
+            if not extra:  # free the slot this call reserved or popped
+                with self._cond:
+                    self._count[key] = self._count.get(key, 0) - 1
+                    self._prune(key)
+                    self._cond.notify_all()
+            if session is not None:
+                self._safe_close(session)
+            raise
         lease.held.append(_Held(self, key, session, gen, extra))
         return session
 

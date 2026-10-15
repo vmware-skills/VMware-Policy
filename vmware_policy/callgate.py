@@ -22,8 +22,9 @@ sees the authenticated caller.
 Pooled skills (D-13(2)): a skill whose connections come from
 ``vmware_policy.pool.SessionPool`` holds its own session per call, so the gate
 is not needed and is skipped (``pooled=True``). Every offloaded call runs in a
-``call_scope`` and its result is serialized inside the worker, while the
-call's sessions are still held — pyVmomi reads properties lazily [H7].
+``call_scope``; its sessions go back to the pool when the tool returns, before
+FastMCP serializes the result, so a tool must return plain data, not live
+pyVmomi objects (the family's tools build dicts; [H7]).
 """
 
 from __future__ import annotations
@@ -105,21 +106,9 @@ class CallGate:
                 self._cond.notify_all()
 
 
-def _materialize(result: Any) -> None:
-    """Serialize once so lazily-read properties are fetched while the session is held."""
-    try:
-        import pydantic_core
-
-        pydantic_core.to_json(result, fallback=str)
-    except Exception:  # FastMCP reports a result it cannot serialize itself
-        pass
-
-
 def _in_scope(fn: Any, kwargs: dict[str, Any]) -> Any:
     with call_scope():
-        result = fn(**kwargs)
-        _materialize(result)
-        return result
+        return fn(**kwargs)
 
 
 def _pooled(fn: Any) -> Any:

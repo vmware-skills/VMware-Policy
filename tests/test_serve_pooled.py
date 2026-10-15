@@ -1,8 +1,7 @@
 """Pooled skills over a network transport (HLD §16 D-13(2) acceptance).
 
 N callers on one target run side by side up to the pool size, a session never
-carries two calls at once, the session is held until the result is serialized,
-and a returned failure still audits as ``error``.
+carries two calls at once, and a returned failure still audits as ``error``.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from tests import test_serve  # noqa: E402
 from tests.test_serve import _call, _run_app, _session  # noqa: E402
 from vmware_policy import serve, tokens  # noqa: E402
 from vmware_policy.decorators import vmware_tool  # noqa: E402
-from vmware_policy.pool import SessionPool, in_call_scope  # noqa: E402
+from vmware_policy.pool import SessionPool  # noqa: E402
 
 ops_home = test_serve.ops_home  # the same sandbox fixture
 
@@ -34,18 +33,7 @@ class Sess:
         self.lock = threading.Lock()
 
 
-class Lazy:
-    """Stands in for a pyVmomi object whose properties are fetched on first read."""
-
-    def __init__(self, seen: list) -> None:
-        self.seen = seen
-
-    def __str__(self) -> str:
-        self.seen.append(in_call_scope())
-        return "lazy"
-
-
-def _pooled_server(log: list, made: list, lazy_seen: list) -> FastMCP:
+def _pooled_server(log: list, made: list) -> FastMCP:
     def create(key: str) -> Sess:
         s = Sess(key)
         made.append(s)
@@ -69,14 +57,6 @@ def _pooled_server(log: list, made: list, lazy_seen: list) -> FastMCP:
             s.users -= 1
         return {"target": target}
 
-    # No @vmware_tool here: its audit step already stringifies results, which
-    # would hide whether the offload itself serializes inside the scope.
-    @mcp.tool(annotations={"readOnlyHint": True})
-    def get_lazy(target: str = "") -> dict:
-        """[READ] Return something read lazily."""
-        pool.get(target or "default")
-        return {"value": Lazy(lazy_seen)}
-
     @mcp.tool(annotations={"readOnlyHint": True})
     @vmware_tool
     def get_broken(target: str = "") -> dict:
@@ -93,7 +73,7 @@ def test_two_calls_on_one_target_overlap_and_a_third_waits(ops_home):  # noqa: F
     secret = tokens.create_token("alice")
     log: list = []
     made: list = []
-    server = _pooled_server(log, made, [])
+    server = _pooled_server(log, made)
 
     async def flow(c):
         _, _, headers = await _session(c, secret)
@@ -116,7 +96,7 @@ def test_two_calls_on_one_target_overlap_and_a_third_waits(ops_home):  # noqa: F
 def test_calls_with_no_target_are_not_serialized_when_pooled(ops_home):  # noqa: F811
     secret = tokens.create_token("alice")
     log: list = []
-    server = _pooled_server(log, [], [])
+    server = _pooled_server(log, [])
 
     async def flow(c):
         _, _, headers = await _session(c, secret)
@@ -130,24 +110,9 @@ def test_calls_with_no_target_are_not_serialized_when_pooled(ops_home):  # noqa:
 
 
 @pytest.mark.unit
-def test_the_result_is_serialized_while_the_session_is_held(ops_home):  # noqa: F811
-    secret = tokens.create_token("alice")
-    lazy_seen: list = []
-    server = _pooled_server([], [], lazy_seen)
-
-    async def flow(c):
-        _, _, headers = await _session(c, secret)
-        return await _call(c, headers, "get_lazy", {"target": "a"})
-
-    status, body = _run_app(server, flow)
-    assert status == 200 and "lazy" in str(body)
-    assert lazy_seen and lazy_seen[0] is True
-
-
-@pytest.mark.unit
 def test_a_returned_failure_audits_as_error_when_pooled(ops_home):  # noqa: F811
     secret = tokens.create_token("alice")
-    server = _pooled_server([], [], [])
+    server = _pooled_server([], [])
 
     async def flow(c):
         _, _, headers = await _session(c, secret)
