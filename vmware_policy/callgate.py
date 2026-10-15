@@ -24,7 +24,8 @@ Pooled skills (D-13(2)): a skill whose connections come from
 is not needed and is skipped (``pooled=True``). Every offloaded call runs in a
 ``call_scope``; its sessions go back to the pool when the tool returns, before
 FastMCP serializes the result, so a tool must return plain data, not live
-pyVmomi objects (the family's tools build dicts; [H7]).
+pyVmomi objects (the family's tools build dicts; [H7]). A returned
+iterator is drained inside the scope, so a generator cannot run after it.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from __future__ import annotations
 import functools
 import inspect
 from collections import Counter
+from collections.abc import Iterator
 from typing import Any
 
 import anyio
@@ -108,7 +110,10 @@ class CallGate:
 
 def _in_scope(fn: Any, kwargs: dict[str, Any]) -> Any:
     with call_scope():
-        return fn(**kwargs)
+        result = fn(**kwargs)
+        if isinstance(result, Iterator):  # a generator would run after the scope ends
+            result = list(result)
+        return result
 
 
 def _pooled(fn: Any) -> Any:

@@ -123,3 +123,31 @@ def test_a_returned_failure_audits_as_error_when_pooled(ops_home):  # noqa: F811
 
     row = next(r for r in AuditEngine().query(limit=5) if r["tool"] == "get_broken")
     assert row["status"] == "error"
+
+
+@pytest.mark.unit
+def test_a_generator_result_runs_inside_the_call_scope(ops_home):  # noqa: F811
+    from vmware_policy.pool import in_call_scope
+
+    seen: list = []
+    mcp = FastMCP("gen")
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def list_lazy(target: str = "") -> list:
+        """[READ] Yields."""
+
+        def gen():
+            seen.append(in_call_scope())
+            yield {"a": 1}
+
+        return gen()
+
+    secret = tokens.create_token("alice")
+    serve.configure(mcp, serve.ServeOptions(skill="storage", transport="http", pooled=True))
+
+    async def flow(c):
+        _, _, headers = await _session(c, secret)
+        return await _call(c, headers, "list_lazy", {"target": "a"})
+
+    status, body = _run_app(mcp, flow)
+    assert status == 200 and seen == [True] and '"a"' in str(body).replace("'", '"')

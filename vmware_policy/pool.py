@@ -218,13 +218,16 @@ class SessionPool(Generic[S]):
             session = self._create(key)
             with self._cond:
                 if self._generation.get(key, 0) == gen:
-                    old = self._shared.get(key)
-                    self._shared[key] = (session, gen)
-                    break
-            self._safe_close(session)  # discard() ran while it was being created
-        if old is not None and old[0] is not session:
-            self._safe_close(old[0])  # another thread replaced it at the same time
-        return session
+                    stored = self._shared.get(key)
+                    if stored is None:
+                        self._shared[key] = (session, gen)
+                        return session
+                    winner = stored[0]  # another thread stored one first: use it
+                else:
+                    winner = None  # discard() ran while it was being created
+            self._safe_close(session)  # never close one another caller already holds
+            if winner is not None:
+                return winner
 
     def _checkout(self, key: str, lease: _Lease) -> S:
         deadline = time.monotonic() + self.wait_timeout

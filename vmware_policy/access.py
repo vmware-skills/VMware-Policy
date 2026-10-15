@@ -200,8 +200,10 @@ def vsphere_access_info(
             out["meaning"] = _MEANING[UNDETERMINED]
         elif by[NOT_GRANTED]:
             out["meaning"] = _MEANING[NOT_GRANTED]
-        else:
+        elif by[GRANTED]:
             out["meaning"] = _MEANING[GRANTED]
+        else:
+            out["meaning"] = _MEANING[NO_PRIVILEGE]
 
     if session is not None and out["account"]:
         out["direct_permissions"], out["direct_permissions_note"] = _direct_permissions(

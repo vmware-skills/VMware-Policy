@@ -198,3 +198,12 @@ def test_an_unreadable_permission_object_does_not_leak_or_fail():
     out = vsphere_access_info(fake_si(am), target="vc1", requirements=REQ, tool="list_vms")
     assert out["direct_permissions"] == [{"role": "NoAccess", "on": "vm-42", "propagate": False}]
     assert "corp.example" not in str(out)
+
+
+@pytest.mark.unit
+def test_a_summary_of_local_only_tools_does_not_claim_a_grant():
+    out = vsphere_access_info(
+        fake_si(FakeAM(set())), target="vc1", requirements={"get_local_thing": []}
+    )
+    assert out["tools_no_privilege_needed"] == ["get_local_thing"]
+    assert "root folder" not in out["meaning"]

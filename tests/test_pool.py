@@ -422,3 +422,27 @@ def test_a_shared_session_created_across_a_discard_is_not_kept():
     go.set()
     t.join(5)
     assert made[0].closed and got[0] is made[1]
+
+
+@pytest.mark.unit
+def test_two_threads_creating_the_shared_session_never_close_a_returned_one():
+    barrier = threading.Barrier(2)
+    made: list[FakeSession] = []
+
+    def create(key: str) -> FakeSession:
+        s = FakeSession(key)
+        made.append(s)
+        barrier.wait(5)  # both create at once
+        return s
+
+    p = SessionPool(
+        "t", create=create, is_alive=lambda s: True, close=lambda s: setattr(s, "closed", True)
+    )
+    got: list = []
+    threads = [threading.Thread(target=lambda: got.append(p.get("vc1"))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    assert len(got) == 2 and not any(s.closed for s in got)
+    assert got[0] is got[1]
