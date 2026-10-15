@@ -134,6 +134,34 @@ change_limits:
 
 Rule changes hot-reload; no service needs a restart.
 
+## Tool exposure
+
+Every skill's MCP server can offer a subset of its tools. `<cli> mcp --expose read` (or
+`VMWARE_<SKILL>_MCP_EXPOSE=read`) keeps only tools annotated `readOnlyHint: true`; `--allow-write a,b`
+(or `VMWARE_<SKILL>_MCP_ALLOW_WRITE`) keeps chosen write tools on top. A tool without the annotation counts as a
+write. An unknown value, or a name that is not a write tool of that server, stops the server before it serves
+(exit 2). Pre-2.0 tool names are accepted.
+
+A launcher that imports a server object directly can use the same code instead of the SDK's private registry:
+
+```python
+from vmware_policy.exposure import restrict_tools
+
+restrict_tools(mcp, skill="storage", expose="read", allow_write=["enable_iscsi"])
+mcp.run(transport="streamable-http")
+```
+
+Inside a running event loop use `await arestrict_tools(...)`. The server object only needs the SDK's public
+`list_tools()` and `remove_tool()`. `restrict_tools` does not read the environment; to honour
+`VMWARE_<SKILL>_MCP_*` the way `<cli> mcp` does, pass `*settings("storage")` (or call `apply_or_exit`). If either
+flag is given, the environment is ignored for both, so the two sources never mix.
+
+A tool that runs other steps (a plan, workflow or batch tool) carries every write it can execute, including writes
+the exposure hides.
+
+This limits what clients are offered. It is not authorization: the account's permissions decide what a call may
+change, and deny rules still apply to every exposed tool.
+
 ## Risk levels
 
 The level a tool declares is recorded in the audit row, can be matched by a

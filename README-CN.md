@@ -125,6 +125,30 @@ change_limits:
 
 规则修改后自动热加载，无需重启任何服务。
 
+## 工具暴露范围
+
+每个 skill 的 MCP server 都可以只提供一部分工具。`<cli> mcp --expose read`（或环境变量
+`VMWARE_<SKILL>_MCP_EXPOSE=read`）只保留标注了 `readOnlyHint: true` 的工具；`--allow-write a,b`（或
+`VMWARE_<SKILL>_MCP_ALLOW_WRITE`）在此基础上再保留指定的写工具。没有这个标注的工具一律算写工具。取值不认识，或者名字
+不是这个 server 的写工具，server 会在开始服务前退出（退出码 2）。2.0 之前的旧工具名也可以用。
+
+直接导入 server 对象的启动程序，可以调用同一段代码，不必去改 SDK 的私有注册表：
+
+```python
+from vmware_policy.exposure import restrict_tools
+
+restrict_tools(mcp, skill="storage", expose="read", allow_write=["enable_iscsi"])
+mcp.run(transport="streamable-http")
+```
+
+在已经运行的事件循环里请用 `await arestrict_tools(...)`。server 对象只需要有 SDK 公开的 `list_tools()` 和
+`remove_tool()` 两个方法。`restrict_tools` 不读环境变量；如果要像 `<cli> mcp` 一样读取 `VMWARE_<SKILL>_MCP_*`，
+请传入 `*settings("storage")`（或调用 `apply_or_exit`）。只要给了任一命令行选项，两个环境变量都会被忽略，两种来源不会混用。
+
+会执行其他步骤的工具（计划、工作流或批量工具）能执行的所有写操作都会随它一起暴露，包括被这个设置隐藏的写操作。
+
+这只决定向客户端提供哪些工具，**不是授权**：一次调用能改什么由账号权限决定，deny 规则对所有暴露出来的工具照样生效。
+
 ## 风险等级
 
 工具声明的等级会写入审计行，可被 deny 规则的 `min_risk_level` 匹配，并决定已配置的
