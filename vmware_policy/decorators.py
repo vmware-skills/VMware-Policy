@@ -210,6 +210,7 @@ def vmware_tool(
                 # signal must not survive into the next call on this task.
                 token = _failure_signal.set(None)
                 try:
+                    _check_common_arguments(state.raw_params)
                     _pre_check(state)
                     return _annotate_result(state, await func(*args, **kwargs))
                 except (PolicyDenied, BudgetExceeded) as exc:
@@ -258,6 +259,7 @@ def vmware_tool(
                 # signal must not survive into the next call on this task.
                 token = _failure_signal.set(None)
                 try:
+                    _check_common_arguments(state.raw_params)
                     _pre_check(state)
                     return _annotate_result(state, func(*args, **kwargs))
                 except (PolicyDenied, BudgetExceeded) as exc:
@@ -410,6 +412,33 @@ def _bind_params(
         else:
             params[name] = value
     return params
+
+
+class ToolArgumentError(ValueError):
+    """An argument no tool in the family accepts, refused before the tool runs.
+
+    A ``ValueError`` so every repo's error envelope passes its text through.
+    """
+
+
+def _check_common_arguments(params: dict[str, Any]) -> None:
+    """Family-wide argument rules, checked once instead of in every tool.
+
+    ``limit`` (2026-10-15): nine repos slice ``results[:limit]`` themselves, so
+    ``limit=-1`` silently dropped the last row and ``limit=0`` returned nothing,
+    while the shared envelope reads both as "unlimited". ``None`` (omitted)
+    means every row; anything else must be a positive integer.
+    """
+    if "limit" not in params:
+        return
+    limit = params["limit"]
+    if limit is None:
+        return
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ToolArgumentError(
+            f"limit must be a positive integer (1 or more), got {limit!r}. "
+            "To get every row, omit limit."
+        )
 
 
 def _pre_check(state: _CallState) -> None:

@@ -124,6 +124,9 @@
     "vm_list_snapshots": "list_vm_snapshots",
     "vm_performance": "get_vm_performance"
   },
+  "vmware-pilot": {
+    "plan_workflow": "create_workflow_from_template"
+  },
   "vmware-privateai": {
     "directpath_profile_list": "list_directpath_profiles",
     "gpu_consumer_list": "list_gpu_consumers",
@@ -185,6 +188,8 @@
     "task_status": "get_vdi_task_status"
   },
   "vmware-vks": {
+    "get_supervisor_kubeconfig": "issue_supervisor_kubeconfig",
+    "get_tkc_kubeconfig": "issue_tkc_kubeconfig",
     "list_vm_groups": "list_vm_service_groups",
     "list_vm_network_interfaces": "list_vm_service_network_interfaces",
     "list_vm_snapshots": "list_vm_service_snapshots"

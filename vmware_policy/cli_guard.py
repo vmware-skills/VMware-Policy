@@ -30,6 +30,7 @@ from typing import Any, Callable
 from vmware_policy.audit import detect_agent
 from vmware_policy.decorators import (
     _bind_params,
+    _check_common_arguments,
     _failure_signal,
     _infer_skill,
     _redact,
@@ -219,6 +220,8 @@ def _enforced(
         # `report_tool_failure` marks THIS command failed, never the next one.
         token = _failure_signal.set(None)
         try:
+            # Same argument rules as @vmware_tool (a negative --limit dropped rows).
+            _check_common_arguments(params)
             # Same authorization gate as @vmware_tool (I-3). A no-op unless the
             # operator wrote deny / maintenance rules; raises PolicyDenied.
             with _config_override(skill, params.get("config")):
