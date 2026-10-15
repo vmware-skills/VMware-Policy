@@ -235,3 +235,36 @@ def test_one_privilege_the_host_does_not_define_leaves_the_others_answered():
     assert out["privileges"]["Namespaces.Manage"] == "undetermined"
     assert out["tools_undetermined"] == ["create_namespace"]
     assert "Namespaces.Manage" in out["reason"]
+
+
+@pytest.mark.unit
+def test_unknown_tool_message_needs_no_connection():
+    from vmware_policy.access import unknown_tool_message
+
+    assert unknown_tool_message(None, REQ) is None
+    assert unknown_tool_message("list_vms", REQ) is None
+    msg = unknown_tool_message("power_on", REQ)
+    assert "power_on_vm" in msg and "doctor" not in msg
+
+
+@pytest.mark.unit
+def test_platform_text_is_sanitized():
+    evil = "VSPHERE.LOCAL\\svc\x1b[2J\x07" + "A" * 900
+    perms = [
+        SimpleNamespace(
+            principal=evil,
+            roleId=-2,
+            entity=SimpleNamespace(name="dc\x00" + "B" * 900),
+            propagate=True,
+        )
+    ]
+    roles = [SimpleNamespace(roleId=-2, name="Role\x1b" + "C" * 900)]
+    am = FakeAM({"System.View"}, perms=perms, roles=roles)
+    out = vsphere_access_info(
+        fake_si(am, user=evil), target="vc1", requirements=REQ, tool="list_vms"
+    )
+    text = str(out)
+    assert "\x1b" not in text and "\x00" not in text and "\x07" not in text
+    assert len(out["account"]) <= 300
+    perm = out["direct_permissions"][0]
+    assert len(perm["on"]) <= 300 and len(perm["role"]) <= 300

@@ -29,6 +29,8 @@ import difflib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from vmware_policy.sanitize import sanitize
+
 GRANTED = "granted_at_root"
 NOT_GRANTED = "not_granted_at_root"
 UNDETERMINED = "undetermined"
@@ -51,6 +53,24 @@ _MEANING = {
         "its own credentials."
     ),
 }
+
+
+def _clean(text: Any) -> str:
+    """Platform text (names an operator can set) goes to an agent: sanitize it."""
+    return sanitize(str(text), 200)
+
+
+def unknown_tool_message(
+    tool: str | None, requirements: Mapping[str, Sequence[str] | None]
+) -> str | None:
+    """The teaching error for a tool name this server lacks, or None. Needs no connection.
+
+    Skills call it before connecting, so a typo costs no login and is not
+    reported as a connection problem.
+    """
+    if tool is None or tool in requirements:
+        return None
+    return str(_unknown_tool(tool, requirements))
 
 
 def _unknown_tool(tool: str, requirements: Mapping[str, Sequence[str] | None]) -> ValueError:
@@ -139,8 +159,8 @@ def _direct_permissions(si: Any, user: str) -> tuple[list[dict[str, Any]] | None
         )
     return [
         {
-            "role": roles.get(p.roleId, str(p.roleId)),
-            "on": _entity_label(p.entity),
+            "role": _clean(roles.get(p.roleId, str(p.roleId))),
+            "on": _clean(_entity_label(p.entity)),
             "propagate": bool(p.propagate),
         }
         for p in perms
@@ -188,9 +208,10 @@ def vsphere_access_info(
         session = si.content.sessionManager.currentSession
     except Exception:
         session = None
+    user = getattr(session, "userName", None) if session else None
     out: dict[str, Any] = {
         "target": target,
-        "account": getattr(session, "userName", None) if session else None,
+        "account": _clean(user) if user else None,
         "checked_on": "root folder (permissions on specific objects are not covered)",
     }
     if session is None:
@@ -245,8 +266,6 @@ def vsphere_access_info(
         else:
             out["meaning"] = _MEANING[NO_PRIVILEGE]
 
-    if session is not None and out["account"]:
-        out["direct_permissions"], out["direct_permissions_note"] = _direct_permissions(
-            si, out["account"]
-        )
+    if session is not None and user:
+        out["direct_permissions"], out["direct_permissions_note"] = _direct_permissions(si, user)
     return out
