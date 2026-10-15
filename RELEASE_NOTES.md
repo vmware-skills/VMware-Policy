@@ -6,8 +6,9 @@
   * MCP: the call fails with a tool error (`isError`) reading `limit must be a positive integer (1 or more), got -1.
     Omit limit to use this tool's default.` It is raised outside the tool body, so it does not come back in a skill's
     `{"error": ...}` envelope. The MCP schema converts first, so `true` and `"5"` arrive as 1 and 5.
-  * CLI: `Error: --limit must be a positive integer …` on stderr, exit code 2, no traceback, regardless of the
-    skill's own CLI error handling.
+  * CLI: a `--limit` option on a guarded or audited command gets `Error: --limit must be a positive integer …` on
+    stderr, exit code 2, no traceback, regardless of the skill's own CLI error handling. (Checked across every
+    family CLI command with a `--limit` option.)
   * Either way the call is audited as an error. `limit` omitted (or `None`) and any positive integer are unchanged;
     omitting it gives the tool's own default, which for many tools is a page, not every row.
   * `ToolArgumentError` (a `ValueError`) is exported from `vmware_policy`.
