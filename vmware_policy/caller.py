@@ -11,6 +11,7 @@ The SDK is imported only when present: vmware-policy does not depend on it.
 from __future__ import annotations
 
 import getpass
+import re
 
 
 def current_caller() -> str | None:
@@ -33,3 +34,38 @@ def audit_user() -> str:
         return getpass.getuser()
     except Exception:
         return "unknown"
+
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9._:-]")
+_TRACE_ID = re.compile(r"^[0-9a-f]{32}$")
+_MAX_ID = 128
+
+
+def current_correlation_id() -> str:
+    """The calling platform's trace id for this request, or ``""``.
+
+    W3C ``traceparent`` first (its trace-id), then ``X-Request-ID``, then
+    ``X-Correlation-ID``. Only network requests carry headers; stdio and the CLI
+    return ``""``. The value is reduced to ``[A-Za-z0-9._:-]`` and 128
+    characters: it is caller-supplied text going into the audit log.
+    """
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+    except ImportError:
+        return ""
+    try:
+        ctx = request_ctx.get()
+    except LookupError:
+        return ""
+    headers = getattr(getattr(ctx, "request", None), "headers", None)
+    if not headers:
+        return ""
+    parent = headers.get("traceparent") or ""
+    parts = parent.strip().split("-")
+    if len(parts) >= 4 and _TRACE_ID.match(parts[1]) and parts[1] != "0" * 32:
+        return parts[1]
+    for name in ("x-request-id", "x-correlation-id"):
+        value = _UNSAFE.sub("", headers.get(name) or "")[:_MAX_ID]
+        if value:
+            return value
+    return ""

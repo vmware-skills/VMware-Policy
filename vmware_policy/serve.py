@@ -27,6 +27,7 @@ from vmware_policy.tokens import FileTokenVerifier, TokenError, TokenStore, toke
 
 TRANSPORTS = ("stdio", "https", "http")
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")
+HEALTHZ = "/healthz"
 _SURFACE = {"stdio": "mcp-stdio", "https": "mcp-https", "http": "mcp-http-loopback"}
 
 
@@ -121,6 +122,24 @@ def _check(opts: ServeOptions) -> TokenStore | None:
     return store
 
 
+async def _healthz(_request: Any) -> Any:
+    from starlette.responses import JSONResponse
+
+    return JSONResponse({"status": "ok"})
+
+
+def _add_healthz(server: Any) -> None:
+    """``GET``/``HEAD /healthz`` without a token, for a load balancer's probe.
+
+    It answers only that the process serves HTTP: no version, no targets, no
+    tool names. Every other path stays behind the token.
+    """
+    routes = getattr(server, "_custom_starlette_routes", [])
+    if any(getattr(r, "path", None) == HEALTHZ for r in routes):
+        return
+    server.custom_route(HEALTHZ, methods=["GET", "HEAD"], include_in_schema=False)(_healthz)
+
+
 def configure(server: Any, opts: ServeOptions) -> str:
     """Validate ``opts`` and prepare ``server`` for its transport. Returns the audit surface.
 
@@ -167,6 +186,7 @@ def configure(server: Any, opts: ServeOptions) -> str:
     # at import time, so it is set here, before streamable_http_app() reads it.
     server._token_verifier = FileTokenVerifier(store)
     offload_sync_tools(server, pooled=opts.pooled)
+    _add_healthz(server)
     set_process_surface(surface)
     return surface
 

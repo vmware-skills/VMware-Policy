@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     rationale   TEXT    NOT NULL DEFAULT '',
     approved_by TEXT    NOT NULL DEFAULT '',
     risk_tier   TEXT    NOT NULL DEFAULT '',
-    surface     TEXT    NOT NULL DEFAULT ''
+    surface     TEXT    NOT NULL DEFAULT '',
+    correlation_id TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -63,11 +64,14 @@ _MIGRATIONS = (
     # HLD §16 D-14: which entry point the call came through. Rows written
     # before the column existed read as '' — unknown, never a guessed surface.
     ("surface", "TEXT NOT NULL DEFAULT ''"),
+    # The calling platform's trace id (traceparent / X-Request-ID), so its
+    # traces can be joined to these rows. '' for stdio, CLI and older rows.
+    ("correlation_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
 _INSERT = """\
-INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier, surface)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier, surface, correlation_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -195,6 +199,7 @@ class AuditEngine:
         approved_by: str = "",
         risk_tier: str = "",
         surface: str = "",
+        correlation_id: str | None = None,
     ) -> None:
         """Write one audit record.  Never raises — swallows errors to avoid
         disrupting the actual tool execution.
@@ -227,6 +232,7 @@ class AuditEngine:
                     approved_by,
                     risk_tier,
                     surface,
+                    _current_correlation_id() if correlation_id is None else correlation_id,
                 ),
             )
             conn.commit()
@@ -314,6 +320,7 @@ class AuditEngine:
         since: str | None = None,
         limit: int = 50,
         surface: str | None = None,
+        correlation_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Query audit records with optional filters.
 
@@ -334,6 +341,9 @@ class AuditEngine:
         if surface:
             clauses.append("surface = ?")
             values.append(surface)
+        if correlation_id:
+            clauses.append("correlation_id = ?")
+            values.append(correlation_id)
         if status:
             clauses.append("status = ?")
             values.append(status)
@@ -397,6 +407,12 @@ def _current_user() -> str:
     from vmware_policy.caller import audit_user
 
     return audit_user()
+
+
+def _current_correlation_id() -> str:
+    from vmware_policy.caller import current_correlation_id
+
+    return current_correlation_id()
 
 
 def _safe_json(obj: Any) -> str:

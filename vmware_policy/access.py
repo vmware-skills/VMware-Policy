@@ -229,7 +229,10 @@ def vsphere_access_info(
     if session is None:
         states = {p: UNDETERMINED for p in wanted}
         reason: str | None = (
-            "No current session on the target, so its privileges could not be asked."
+            "vCenter shows no session for this login, so its privileges could not be asked. "
+            "If the login itself succeeded, the account most likely has no vSphere role: "
+            "assign one (Read-Only or higher) on the vCenter root folder. Otherwise the "
+            "session expired; retry."
         )
     else:
         states, reason = _privilege_states(si, session.key, wanted)

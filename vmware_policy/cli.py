@@ -68,6 +68,11 @@ def log(
     surface: str | None = typer.Option(
         None, help="Filter by entry point (mcp-stdio/mcp-https/mcp-http-loopback/cli/daemon)"
     ),
+    correlation_id: str | None = typer.Option(
+        None,
+        "--correlation-id",
+        help="Filter by the calling platform's trace id (traceparent / X-Request-ID)",
+    ),
 ) -> None:
     """Show recent audit log entries."""
     engine = get_engine()
@@ -79,6 +84,7 @@ def log(
         workflow_id=workflow_id,
         since=since,
         limit=last,
+        correlation_id=correlation_id,
     )
 
     if not rows:
