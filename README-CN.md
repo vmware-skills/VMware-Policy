@@ -78,7 +78,7 @@ vmware-policy 是所有 VMware 技能的**强制依赖**，提供：
 - **审计日志**：经 `@vmware_tool` 包裹的 MCP 工具，其调用记录写入统一数据库 `~/.vmware/audit.db`
 - **策略引擎**：deny 规则、维护窗口，热加载无需重启（变更限制为预留字段，不强制执行）
 - **输入消毒**：所有来自 vSphere/NSX/Aria API 的文本经过 `sanitize()` 处理
-- **AI Agent 检测**：自动识别 Claude、Codex、Ollama、DeerFlow 等调用方
+- **AI Agent 检测**：根据环境变量记录调用方：`claude`、`codex`、`deerflow`、`local`（Ollama 主机）或 `unknown`
 
 ## 策略规则配置
 

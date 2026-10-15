@@ -84,7 +84,7 @@ vmware-policy is a **mandatory dependency** of every VMware skill. It provides:
 - **Audit logging**: calls to MCP tools wrapped by `@vmware_tool` are recorded in the unified database `~/.vmware/audit.db`
 - **Policy engine**: deny rules and maintenance window, hot-reloaded without a restart (change limits are a reserved field and not enforced)
 - **Input sanitization**: all text from the vSphere/NSX/Aria APIs passes through `sanitize()`
-- **AI agent detection**: identifies callers such as Claude, Codex, Ollama and DeerFlow automatically
+- **AI agent detection**: records the caller from its environment: `claude`, `codex`, `deerflow`, `local` (an Ollama host) or `unknown`
 
 ## Policy rules
 
