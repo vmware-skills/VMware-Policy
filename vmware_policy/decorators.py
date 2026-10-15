@@ -417,17 +417,23 @@ def _bind_params(
 class ToolArgumentError(ValueError):
     """An argument no tool in the family accepts, refused before the tool runs.
 
-    A ``ValueError`` so every repo's error envelope passes its text through.
+    A ``ValueError`` so code that catches ``ValueError`` around a call still
+    sees it. It is raised by the decorator, outside the tool body, so on MCP it
+    reaches the client as a tool error (``isError``) rather than through a
+    repo's ``{"error": ...}`` envelope; the CLI guard prints it and exits 2.
     """
 
 
-def _check_common_arguments(params: dict[str, Any]) -> None:
+def _check_common_arguments(params: dict[str, Any], *, cli: bool = False) -> None:
     """Family-wide argument rules, checked once instead of in every tool.
 
     ``limit`` (2026-10-15): nine repos slice ``results[:limit]`` themselves, so
     ``limit=-1`` silently dropped the last row and ``limit=0`` returned nothing,
     while the shared envelope reads both as "unlimited". ``None`` (omitted)
-    means every row; anything else must be a positive integer.
+    means the tool's own default — every row for some tools, a page for
+    others — so the message says "default", not "every row". Over MCP the
+    schema coerces first (``true`` → 1, ``"5"`` → 5), so the bool/str refusal
+    only fires for direct Python calls.
     """
     if "limit" not in params:
         return
@@ -435,9 +441,10 @@ def _check_common_arguments(params: dict[str, Any]) -> None:
     if limit is None:
         return
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        name, what = ("--limit", "command") if cli else ("limit", "tool")
         raise ToolArgumentError(
-            f"limit must be a positive integer (1 or more), got {limit!r}. "
-            "To get every row, omit limit."
+            f"{name} must be a positive integer (1 or more), got {limit!r}. "
+            f"Omit {name} to use this {what}'s default."
         )
 
 
@@ -722,7 +729,7 @@ def _redact_value(value: Any, sensitive: set[str]) -> Any:
 # the machine and attached to a ticket — so a secret filed there is worse than
 # one in a log. Both redactions below rewrite the audit copy only; the caller
 # always receives the real value, which is the entire point of tools like
-# vmware-vks's ``get_supervisor_kubeconfig``.
+# vmware-vks's ``issue_supervisor_kubeconfig``.
 
 #: What a tool that declared ``sensitive_result=True`` contributes instead of
 #: its return value. A truncated or hashed secret is still a finding, so the

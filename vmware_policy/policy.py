@@ -326,8 +326,9 @@ class PolicyEngine:
         #   - refuse to construct the engine — turns a one-line YAML typo into
         #     an import-time traceback in 15 skills with nothing to read;
         #   - deny only writes — assumes reads are safe, which is false in this
-        #     family: `get_supervisor_kubeconfig` is a READ tool that returns a
-        #     live Supervisor JWT, and freezing exactly that is a rule an
+        #     family: `issue_supervisor_kubeconfig` (`get_supervisor_kubeconfig`
+        #     before vks 3.0) returns a live Supervisor JWT under a name that
+        #     read as a read, and freezing exactly that is a rule an
         #     operator plausibly writes;
         #   - deny only what the missing rules would have gated — unknowable.
         #     Not knowing is the whole condition; guessing narrow is guessing

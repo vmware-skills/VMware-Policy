@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 from vmware_policy.audit import detect_agent
 from vmware_policy.decorators import (
+    ToolArgumentError,
     _bind_params,
     _check_common_arguments,
     _failure_signal,
@@ -37,6 +38,7 @@ from vmware_policy.decorators import (
     _redact_credential_keys,
     _redact_secrets_text,
     audited_status,
+    report_tool_failure,
 )
 from vmware_policy.guard import audit_call, guard
 from vmware_policy.policy import PolicyDenied
@@ -221,7 +223,18 @@ def _enforced(
         token = _failure_signal.set(None)
         try:
             # Same argument rules as @vmware_tool (a negative --limit dropped rows).
-            _check_common_arguments(params)
+            # Printed and exited here, like a usage error: several CLIs catch
+            # only their own error types and would show a traceback (review
+            # 2026-10-15: Monitor, NSX, Harden). The Exit handler below files
+            # the reported text in the audit row.
+            try:
+                _check_common_arguments(params, cli=True)
+            except ToolArgumentError as exc:
+                import typer  # a declared dependency; imported here like the Exit classes above
+
+                report_tool_failure(str(exc))
+                typer.echo(f"Error: {exc}", err=True)
+                raise typer.Exit(2) from None
             # Same authorization gate as @vmware_tool (I-3). A no-op unless the
             # operator wrote deny / maintenance rules; raises PolicyDenied.
             with _config_override(skill, params.get("config")):

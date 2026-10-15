@@ -1,14 +1,22 @@
 ## v1.19.0 — `limit` is checked before any tool runs; three write tools get write verbs
 
 * **A `limit` below 1 is refused** for every MCP tool (`@vmware_tool`) and every guarded or audited CLI command,
-  before the tool runs. Nine skills sliced their results with `[:limit]`, so `limit=-1` silently dropped the last
-  row and `limit=0` returned nothing while reporting success. The refusal is a `ToolArgumentError` (a `ValueError`,
-  so every skill's error envelope shows its text) and is audited as a failed call. `limit=None` and any positive
-  integer are unchanged; booleans, strings and floats are refused too. To get every row, omit `limit`.
+  before the tool runs. Several skills sliced their results with `[:limit]` on paths that did not check it, so
+  `limit=-1` silently dropped the last row and `limit=0` returned nothing while reporting success.
+  * MCP: the call fails with a tool error (`isError`) reading `limit must be a positive integer (1 or more), got -1.
+    Omit limit to use this tool's default.` It is raised outside the tool body, so it does not come back in a skill's
+    `{"error": ...}` envelope. The MCP schema converts first, so `true` and `"5"` arrive as 1 and 5.
+  * CLI: `Error: --limit must be a positive integer …` on stderr, exit code 2, no traceback, regardless of the
+    skill's own CLI error handling.
+  * Either way the call is audited as an error. `limit` omitted (or `None`) and any positive integer are unchanged;
+    omitting it gives the tool's own default, which for many tools is a page, not every row.
+  * `ToolArgumentError` (a `ValueError`) is exported from `vmware_policy`.
 * **Rename table: three write tools that had read verbs.** vmware-vks `get_supervisor_kubeconfig` →
   `issue_supervisor_kubeconfig`, `get_tkc_kubeconfig` → `issue_tkc_kubeconfig` (they mint credentials and write a
   file); vmware-pilot `plan_workflow` → `create_workflow_from_template` (it creates a workflow). Deny rules written
   with either name keep matching, as for the other 2.0 renames. Ships with vmware-vks 3.0.0 and vmware-pilot 2.0.0.
+  A rule that is a glob can now match one more tool: `create_*` also matches pilot's `create_workflow_from_template`
+  (`vmware-audit policy` lists every rule a rename widened).
 
 ## v1.18.2 — deny rules match across the 2.0 rename in both directions
 

@@ -23,7 +23,11 @@ def list_things(limit: int | None = None) -> dict:
 def test_a_limit_that_is_not_a_positive_integer_is_refused(bad):
     with pytest.raises(ToolArgumentError) as exc:
         list_things(limit=bad)
-    assert "limit" in str(exc.value) and "omit" in str(exc.value)
+    msg = str(exc.value)
+    assert msg.startswith("limit must be a positive integer")
+    # Omitting limit gives the tool's default, which is a page for many tools —
+    # never promise "every row" (review 2026-10-15).
+    assert "tool's default" in msg and "every row" not in msg
 
 
 def test_refusal_is_a_value_error_so_every_repo_shows_its_text():
@@ -60,7 +64,43 @@ def test_cli_commands_follow_the_same_rule(tmp_path, monkeypatch):
     def vm_list(limit: int | None = None) -> None:
         return None
 
-    with pytest.raises(ToolArgumentError):
+    import typer
+
+    with pytest.raises(typer.Exit) as exc:
         vm_list(limit=-1)
+    assert exc.value.exit_code == 2
     row = eng.query(limit=1)[0]
     assert row["status"] == "error" and row["surface"] == "cli"
+    assert "--limit must be a positive integer" in str(row["result"])
+
+
+def test_cli_refusal_is_a_usage_error_not_a_traceback(tmp_path, monkeypatch):
+    """A CLI that catches only its own error types must still print one line.
+
+    Monitor/NSX/Harden showed a 45-line Rich traceback for ``--limit 0``.
+    """
+    import typer
+    from typer.testing import CliRunner
+
+    from vmware_policy import audited
+    from vmware_policy import guard as guard_mod
+    from vmware_policy.audit import AuditEngine
+
+    eng = AuditEngine(db_path=tmp_path / "audit.db")
+    monkeypatch.setattr(guard_mod, "get_engine", lambda: eng)
+    app = typer.Typer()
+
+    @app.command()
+    @audited("list_vms")
+    def vms(limit: int = typer.Option(None, "--limit")) -> None:
+        typer.echo("listed")
+
+    @app.command()
+    def other() -> None:  # a second command so Typer keeps the subcommand name
+        pass
+
+    result = CliRunner().invoke(app, ["vms", "--limit", "0"])
+    assert result.exit_code == 2
+    assert "Error: --limit must be a positive integer (1 or more), got 0." in result.output
+    assert "Traceback" not in result.output and "listed" not in result.output
+    assert CliRunner().invoke(app, ["vms", "--limit", "3"]).exit_code == 0

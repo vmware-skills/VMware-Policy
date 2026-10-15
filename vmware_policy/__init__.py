@@ -5,7 +5,12 @@ __version__ = "1.19.0"
 from vmware_policy.audit import AuditEngine, get_engine
 from vmware_policy.budget import BudgetExceeded, BudgetTracker, get_budget
 from vmware_policy.cli_guard import audited, cli_local, guarded
-from vmware_policy.decorators import PolicyDenied, report_tool_failure, vmware_tool
+from vmware_policy.decorators import (
+    PolicyDenied,
+    ToolArgumentError,
+    report_tool_failure,
+    vmware_tool,
+)
 from vmware_policy.toolschema import (
     describe_tool_parameters,
     enforce_declared_parameters,
@@ -36,6 +41,7 @@ __all__ = [
     "guarded",
     "audited",
     "cli_local",
+    "ToolArgumentError",
     "report_tool_failure",
     "sanitize",
     "paginated",
