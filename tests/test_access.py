@@ -307,3 +307,23 @@ def test_ids_the_host_lacks_do_not_hide_the_ones_it_answers():
     assert out["privileges"]["System.Read"] == "granted_at_root"
     assert "read" in out["tools_granted_at_root"]
     assert sorted(out["tools_undetermined"]) == ["a", "b", "c"]
+
+
+@pytest.mark.unit
+def test_a_login_without_a_session_is_recognised():
+    from vmware_policy.access import login_has_no_session, no_role_message
+
+    with_role = fake_si(FakeAM(set()))
+    without = fake_si(FakeAM(set()), session=False)
+    assert login_has_no_session(with_role) is False
+    assert login_has_no_session(without) is True
+
+    class Broken:
+        @property
+        def content(self):
+            raise RuntimeError("cannot tell")
+
+    assert login_has_no_session(Broken()) is False  # unknown is not a verdict
+    msg = no_role_message("vc1", "vmware-monitor")
+    assert "vc1" in msg and "role" in msg and "vmware-monitor doctor" in msg
+    assert "password" in msg  # says changing it will not help

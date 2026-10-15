@@ -135,6 +135,32 @@ def _privilege_states(
     return states, reason
 
 
+def login_has_no_session(si: Any) -> bool:
+    """True when a login succeeded but vCenter shows no session for it.
+
+    That is what an account with no vSphere role looks like (AIops#47): the
+    login is accepted, ``currentSession`` reads ``None``, and every inventory
+    call then fails with NotAuthenticated. Called right after connecting, so an
+    expired session is not the explanation. If the property cannot be read the
+    answer is unknown, and unknown is not a verdict: ``False``.
+    """
+    try:
+        return si.content.sessionManager.currentSession is None
+    except Exception:
+        return False
+
+
+def no_role_message(target: str, cli: str) -> str:
+    """The teaching error for :func:`login_has_no_session`, shared by the vSphere skills."""
+    return (
+        f"Logged in to target '{target}', but vCenter shows no session for this account, "
+        "so it cannot read anything: the account most likely has no vSphere role. Assign one "
+        "(Read-Only or higher) to the account on the vCenter root folder (Administration > "
+        f"Access Control > Global Permissions), then run '{cli} doctor'. Changing the password "
+        "will not help."
+    )
+
+
 OUTSIDE_REASON = (
     "This tool is decided by a permission this check cannot see (for example a Supervisor "
     "namespace role), so access is unknown here; it is not assumed either way."
