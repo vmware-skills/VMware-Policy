@@ -1,3 +1,15 @@
+## v1.19.0 — `limit` is checked before any tool runs; three write tools get write verbs
+
+* **A `limit` below 1 is refused** for every MCP tool (`@vmware_tool`) and every guarded or audited CLI command,
+  before the tool runs. Nine skills sliced their results with `[:limit]`, so `limit=-1` silently dropped the last
+  row and `limit=0` returned nothing while reporting success. The refusal is a `ToolArgumentError` (a `ValueError`,
+  so every skill's error envelope shows its text) and is audited as a failed call. `limit=None` and any positive
+  integer are unchanged; booleans, strings and floats are refused too. To get every row, omit `limit`.
+* **Rename table: three write tools that had read verbs.** vmware-vks `get_supervisor_kubeconfig` →
+  `issue_supervisor_kubeconfig`, `get_tkc_kubeconfig` → `issue_tkc_kubeconfig` (they mint credentials and write a
+  file); vmware-pilot `plan_workflow` → `create_workflow_from_template` (it creates a workflow). Deny rules written
+  with either name keep matching, as for the other 2.0 renames. Ships with vmware-vks 3.0.0 and vmware-pilot 2.0.0.
+
 ## v1.18.2 — deny rules match across the 2.0 rename in both directions
 
 * **A rule written with a 2.0 name now also refuses a 1.x skill calling the old name.** `~/.vmware/rules.yaml` is
