@@ -13,7 +13,9 @@
   account, what a tool needs (from the skill's requirements table) and whether the current session holds it on the
   root folder. `not_granted_at_root` is not reported as no access; a failed lookup is `undetermined`, and a
   summary with any undetermined tool says so rather than "granted".
-* Every offloaded call now runs in a call scope.
+* Every offloaded call now runs in a call scope. A returned iterator is drained inside it.
+* The per-skill config loader (`mtime_cached_loader`) checks and reloads under a lock, so concurrent first calls
+  load once and cannot store a stale value.
 
 ## v1.21.0 — MCP over HTTPS: tokens, caller identity, concurrency (HLD §16)
 

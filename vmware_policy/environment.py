@@ -195,8 +195,15 @@ def mtime_cached_loader(
     their own except-means-undeclared handling.
     """
     state: dict[str, Any] = {"path": None, "mtime": None, "value": None, "loaded": False}
+    # Calls run in worker threads on a network transport: the check and the
+    # reload must be one step, or a stale value can be stored after a newer one.
+    lock = threading.Lock()
 
     def cached() -> Any:
+        with lock:
+            return _refresh()
+
+    def _refresh() -> Any:
         raw = os.environ.get(env_var)
         path = Path(raw) if raw else Path(default_path)
         try:

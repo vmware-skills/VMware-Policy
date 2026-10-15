@@ -446,3 +446,33 @@ def test_two_threads_creating_the_shared_session_never_close_a_returned_one():
         t.join(5)
     assert len(got) == 2 and not any(s.closed for s in got)
     assert got[0] is got[1]
+
+
+@pytest.mark.unit
+def test_the_config_loader_loads_once_under_concurrent_first_calls(tmp_path, monkeypatch):
+    from vmware_policy.environment import mtime_cached_loader
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("x", encoding="utf-8")
+    calls: list = []
+    barrier = threading.Barrier(4)
+
+    def loader(path):
+        calls.append(path)
+        time.sleep(0.05)
+        return object()
+
+    monkeypatch.delenv("VMWARE_TEST_CONFIG", raising=False)
+    cached = mtime_cached_loader("VMWARE_TEST_CONFIG", cfg, loader)
+    got: list = []
+
+    def call():
+        barrier.wait(5)
+        got.append(cached())
+
+    threads = [threading.Thread(target=call) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    assert len(calls) == 1 and len({id(g) for g in got}) == 1
