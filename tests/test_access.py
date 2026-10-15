@@ -207,3 +207,15 @@ def test_a_summary_of_local_only_tools_does_not_claim_a_grant():
     )
     assert out["tools_no_privilege_needed"] == ["get_local_thing"]
     assert "root folder" not in out["meaning"]
+
+
+@pytest.mark.unit
+def test_a_tool_decided_outside_vsphere_is_undetermined_not_granted():
+    req = {**REQ, "create_tkc": None}
+    out = vsphere_access_info(
+        fake_si(FakeAM({"System.View"})), target="vc1", requirements=req, tool="create_tkc"
+    )
+    assert out["tool"]["verdict"] == "undetermined"
+    assert "namespace role" in out["tool"]["reason"]
+    summary = vsphere_access_info(fake_si(FakeAM({"System.View"})), target="vc1", requirements=req)
+    assert "create_tkc" in summary["tools_undetermined"]

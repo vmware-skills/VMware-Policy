@@ -12,8 +12,13 @@ that is not granted at the root may still be granted where the tool acts:
 is ``undetermined`` with the error's class name (not its text, which can carry
 host names), and is never read as granted.
 
-``requirements`` is the skill's table ``{tool name: [privilege ids]}``; an empty
-list means the tool needs no platform privilege (it reads local state). The
+``requirements`` is the skill's table ``{tool name: [privilege ids]}``. An empty
+list means the tool needs no vSphere privilege (it reads local state, or calls
+another API with its own credentials). ``None`` means access is decided by a
+permission this check cannot see (a Supervisor namespace role, say): the tool
+is always ``undetermined``. Never list only a tool's read privileges when it
+also needs one the table cannot name — that reads as "granted" for an account
+that will be refused. The
 family gate checks that every registered tool has an entry and that every
 privilege id is one vSphere defines.
 """
@@ -41,11 +46,14 @@ _MEANING = {
     UNDETERMINED: (
         "The platform did not answer, so access is unknown; it is not assumed either way."
     ),
-    NO_PRIVILEGE: "This tool reads local state only and needs no privilege on the platform.",
+    NO_PRIVILEGE: (
+        "This tool needs no vSphere privilege: it reads local state, or calls another API with "
+        "its own credentials."
+    ),
 }
 
 
-def _unknown_tool(tool: str, requirements: Mapping[str, Sequence[str]]) -> ValueError:
+def _unknown_tool(tool: str, requirements: Mapping[str, Sequence[str] | None]) -> ValueError:
     close = difflib.get_close_matches(tool, list(requirements), n=3, cutoff=0.5)
     hint = f" Did you mean {', '.join(close)}?" if close else ""
     return ValueError(
@@ -76,7 +84,15 @@ def _privilege_states(
     return states, reason
 
 
-def _verdict(required: Sequence[str], states: Mapping[str, str]) -> str:
+OUTSIDE_REASON = (
+    "This tool is decided by a permission this check cannot see (for example a Supervisor "
+    "namespace role), so access is unknown here; it is not assumed either way."
+)
+
+
+def _verdict(required: Sequence[str] | None, states: Mapping[str, str]) -> str:
+    if required is None:
+        return UNDETERMINED
     if not required:
         return NO_PRIVILEGE
     values = [states.get(p, UNDETERMINED) for p in required]
@@ -130,7 +146,7 @@ def vsphere_access_info(
     si: Any,
     *,
     target: str,
-    requirements: Mapping[str, Sequence[str]],
+    requirements: Mapping[str, Sequence[str] | None],
     tool: str | None = None,
 ) -> dict[str, Any]:
     """Who this server acts as on ``target``, and whether it holds what ``tool`` needs.
@@ -143,9 +159,9 @@ def vsphere_access_info(
         {
             p
             for p in (
-                requirements[tool]
+                (requirements[tool] or [])
                 if tool is not None
-                else [x for v in requirements.values() for x in v]
+                else [x for v in requirements.values() for x in (v or [])]
             )
         }
     )
@@ -170,7 +186,8 @@ def vsphere_access_info(
         out["reason"] = reason
 
     if tool is not None:
-        required = list(requirements[tool])
+        entry = requirements[tool]
+        required = None if entry is None else list(entry)
         verdict = _verdict(required, states)
         info: dict[str, Any] = {
             "name": tool,
@@ -179,9 +196,13 @@ def vsphere_access_info(
             "meaning": _MEANING[verdict],
         }
         if verdict == NOT_GRANTED:
-            info["missing_at_root"] = [p for p in required if states.get(p) == NOT_GRANTED]
+            info["missing_at_root"] = [p for p in required or [] if states.get(p) == NOT_GRANTED]
         if verdict == UNDETERMINED:
-            info["reason"] = reason or "No answer for this tool's privileges."
+            info["reason"] = (
+                OUTSIDE_REASON
+                if required is None
+                else reason or "No answer for this tool's privileges."
+            )
         out["tool"] = info
     else:
         by: dict[str, list[str]] = {
