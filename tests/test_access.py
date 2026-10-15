@@ -327,3 +327,11 @@ def test_a_login_without_a_session_is_recognised():
     msg = no_role_message("vc1", "vmware-monitor")
     assert "vc1" in msg and "role" in msg and "vmware-monitor doctor" in msg
     assert "password" in msg  # says changing it will not help
+
+
+@pytest.mark.unit
+def test_the_role_message_fits_the_skills_error_cap():
+    from vmware_policy.access import no_role_message
+
+    msg = no_role_message("vcenter-prod-01", "vmware-nsx-security")
+    assert len(msg) <= 300 and msg.endswith("A new password will not help.")

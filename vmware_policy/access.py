@@ -151,13 +151,15 @@ def login_has_no_session(si: Any) -> bool:
 
 
 def no_role_message(target: str, cli: str) -> str:
-    """The teaching error for :func:`login_has_no_session`, shared by the vSphere skills."""
+    """The teaching error for :func:`login_has_no_session`, shared by the vSphere skills.
+
+    Kept under 300 characters for a usual target name: the skills cut MCP error
+    text there, and the remedy is at the end.
+    """
     return (
-        f"Logged in to target '{target}', but vCenter shows no session for this account, "
-        "so it cannot read anything: the account most likely has no vSphere role. Assign one "
-        "(Read-Only or higher) to the account on the vCenter root folder (Administration > "
-        f"Access Control > Global Permissions), then run '{cli} doctor'. Changing the password "
-        "will not help."
+        f"Logged in to '{target}', but vCenter shows no session for this account: it has no "
+        "vSphere role. Assign Read-Only or higher on the vCenter root (Global Permissions), "
+        f"then run '{cli} doctor'. A new password will not help."
     )
 
 
