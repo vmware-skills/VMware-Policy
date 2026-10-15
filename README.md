@@ -188,6 +188,11 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
   (stdio and CLI calls are not matched by such a rule).
 - Before it binds, the server sends itself unauthenticated POST/GET/DELETE requests and refuses to start unless
   all three get 401.
+- `GET`/`HEAD /healthz` answers `{"status": "ok"}` without a token, for a load balancer's health probe; it reveals
+  nothing else and accepts any `Host`. Every other path requires the token.
+- Each audit row records the caller's correlation id: the trace-id of a `traceparent` header, else `X-Request-ID`,
+  else `X-Correlation-ID` (safe characters only, up to 128). `vmware-audit log --correlation-id ID` finds the rows
+  for one platform request.
 - **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
   at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
 

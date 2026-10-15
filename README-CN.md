@@ -172,6 +172,11 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 - deny 规则可以按调用者限定：在 `$OPS_HOME/rules.yaml` 里写 `clients: ["intern-*"]`，只对这些 token 名字生效
   （stdio 和 CLI 调用不受这类规则影响）。
 - 绑定端口之前，server 会先向自己发送不带 token 的 POST/GET/DELETE 请求，三个都得到 401 才会启动。
+- `GET`/`HEAD /healthz` 不需要 token，返回 `{"status": "ok"}`，供负载均衡做健康检查；它不透露任何其他信息，
+  也不校验 `Host`。其他所有路径都需要 token。
+- 每条审计记录都带上调用方的关联 ID：`traceparent` 头里的 trace-id，没有则取 `X-Request-ID`，再没有取
+  `X-Correlation-ID`（只保留安全字符，最长 128）。`vmware-audit log --correlation-id ID` 可以查出平台上某一次请求
+  对应的记录。
 - **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
   按可以互相看到工作内容的人群，各开一个端点。
 

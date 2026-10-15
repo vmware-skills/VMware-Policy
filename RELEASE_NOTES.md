@@ -1,3 +1,17 @@
+## v1.23.0 — load-balancer health check, request correlation, role-less accounts
+
+* **`GET`/`HEAD /healthz` without a token** on the network transports, for a load balancer's probe. It answers
+  `{"status": "ok"}` and nothing else (no version, targets or tools), accepts any `Host` (balancers probe by IP),
+  and every other path still requires the token.
+* **Audit rows carry the caller's correlation id.** The trace-id of a W3C `traceparent` header, else
+  `X-Request-ID`, else `X-Correlation-ID`, reduced to `[A-Za-z0-9._:-]` and 128 characters, in a new
+  `correlation_id` column (existing databases migrate in place; older rows, stdio and CLI read `''`).
+  `vmware-audit log --correlation-id ID` filters by it, so a platform trace can be joined to this server's rows.
+* **Role-less vSphere accounts (AIops#47).** `vmware_policy.access.login_has_no_session(si)` recognises a login that
+  succeeded but has no session (an account with no vSphere role); `no_role_message(target, cli)` is the shared
+  teaching error the vSphere skills raise at connect time. `get_access_info`'s reason for a missing session now
+  names the role.
+
 ## v1.22.0 — session pools and access self-diagnosis (HLD §16 D-13(2), §17 D-17)
 
 * **Session pools.** `vmware_policy.pool.SessionPool` keeps up to `VMWARE_MCP_POOL_SIZE` (default 2) sessions per
