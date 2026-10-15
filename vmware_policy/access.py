@@ -135,19 +135,49 @@ def _privilege_states(
     return states, reason
 
 
-def login_has_no_session(si: Any) -> bool:
-    """True when a login succeeded but vCenter shows no session for it.
+def login_has_no_session(
+    si: Any, *, entity_type: Any = None, refused: tuple[type, ...] | None = None
+) -> bool:
+    """True only when a login succeeded but the account can read nothing at all.
 
     That is what an account with no vSphere role looks like (AIops#47): the
-    login is accepted, ``currentSession`` reads ``None``, and every inventory
-    call then fails with NotAuthenticated. Called right after connecting, so an
-    expired session is not the explanation. If the property cannot be read the
-    answer is unknown, and unknown is not a verdict: ``False``.
+    login is accepted, ``currentSession`` reads ``None``, and inventory calls
+    fail with NotAuthenticated. Both signals are required, because a refusal at
+    connect time turns a working setup into a hard failure: an account scoped
+    to one folder, or one that only holds Supervisor namespace permissions, may
+    also read ``currentSession`` as ``None`` yet still work. So the second
+    signal is a container view on the root folder, refused with
+    NotAuthenticated or NoPermission. Anything else, including an error that is
+    neither, is unknown, and unknown is not a verdict: ``False``.
+
+    ``entity_type`` / ``refused`` default to pyVmomi's ``vim.ManagedEntity`` and
+    ``(vim.fault.NotAuthenticated, vim.fault.NoPermission)``; without pyVmomi
+    nothing is concluded.
     """
     try:
-        return si.content.sessionManager.currentSession is None
+        if si.content.sessionManager.currentSession is not None:
+            return False
     except Exception:
         return False
+    if entity_type is None or refused is None:
+        try:
+            from pyVmomi import vim
+        except ImportError:
+            return False
+        entity_type = entity_type or vim.ManagedEntity
+        refused = refused or (vim.fault.NotAuthenticated, vim.fault.NoPermission)
+    try:
+        content = si.content
+        view = content.viewManager.CreateContainerView(content.rootFolder, [entity_type], False)
+    except refused:
+        return True
+    except Exception:
+        return False
+    try:
+        view.Destroy()
+    except Exception:  # the probe is done either way
+        pass
+    return False
 
 
 def no_role_message(target: str, cli: str) -> str:

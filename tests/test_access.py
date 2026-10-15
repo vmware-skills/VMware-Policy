@@ -309,21 +309,73 @@ def test_ids_the_host_lacks_do_not_hide_the_ones_it_answers():
     assert sorted(out["tools_undetermined"]) == ["a", "b", "c"]
 
 
-@pytest.mark.unit
-def test_a_login_without_a_session_is_recognised():
-    from vmware_policy.access import login_has_no_session, no_role_message
+class _RefusedError(Exception):
+    """Stands in for vim.fault.NotAuthenticated / NoPermission."""
 
-    with_role = fake_si(FakeAM(set()))
-    without = fake_si(FakeAM(set()), session=False)
-    assert login_has_no_session(with_role) is False
-    assert login_has_no_session(without) is True
+
+class _Entity:
+    """Stands in for vim.ManagedEntity."""
+
+
+def _si_with_view(session: bool, view_error: Exception | None):
+    si = fake_si(FakeAM(set()), session=session)
+    calls = []
+
+    class View:
+        def Destroy(self):  # noqa: N802
+            calls.append("destroy")
+
+    def create(container, types, recursive):
+        calls.append(("create", container, tuple(types), recursive))
+        if view_error:
+            raise view_error
+        return View()
+
+    si.content.viewManager = SimpleNamespace(CreateContainerView=create)
+    return si, calls
+
+
+@pytest.mark.unit
+def test_a_role_less_login_needs_both_signals():
+    from vmware_policy.access import login_has_no_session
+
+    kw = {"entity_type": _Entity, "refused": (_RefusedError,)}
+    # no session AND inventory refused -> role-less
+    si, calls = _si_with_view(session=False, view_error=_RefusedError())
+    assert login_has_no_session(si, **kw) is True
+    # no session but inventory readable (a scoped or namespace-only account) -> not refused
+    si, calls = _si_with_view(session=False, view_error=None)
+    assert login_has_no_session(si, **kw) is False
+    assert calls[-1] == "destroy"  # the probe view is cleaned up
+    # a session -> never probed
+    si, calls = _si_with_view(session=True, view_error=_RefusedError())
+    assert login_has_no_session(si, **kw) is False and calls == []
+    # any other error from the probe is unknown, and unknown is not a verdict
+    si, _ = _si_with_view(session=False, view_error=RuntimeError("socket"))
+    assert login_has_no_session(si, **kw) is False
+
+
+@pytest.mark.unit
+def test_a_role_less_login_is_not_concluded_without_pyvmomi():
+    from vmware_policy.access import login_has_no_session
+
+    si, calls = _si_with_view(session=False, view_error=_RefusedError())
+    try:
+        import pyVmomi  # noqa: F401
+    except ImportError:
+        assert login_has_no_session(si) is False and calls == []
+
+
+@pytest.mark.unit
+def test_an_unreadable_session_property_is_not_a_verdict():
+    from vmware_policy.access import login_has_no_session, no_role_message
 
     class Broken:
         @property
         def content(self):
             raise RuntimeError("cannot tell")
 
-    assert login_has_no_session(Broken()) is False  # unknown is not a verdict
+    assert login_has_no_session(Broken(), entity_type=_Entity, refused=(_RefusedError,)) is False
     msg = no_role_message("vc1", "vmware-monitor")
     assert "vc1" in msg and "role" in msg and "vmware-monitor doctor" in msg
     assert "password" in msg  # says changing it will not help
