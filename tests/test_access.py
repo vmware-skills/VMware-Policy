@@ -284,3 +284,26 @@ def test_granted_meaning_does_not_claim_every_object():
     from vmware_policy.access import _MEANING, GRANTED
 
     assert "every object" not in _MEANING[GRANTED]
+
+
+@pytest.mark.unit
+def test_ids_the_host_lacks_do_not_hide_the_ones_it_answers():
+    known = {"System.Read", "System.View"}
+
+    class Esx(FakeAM):
+        def HasPrivilegeOnEntities(self, entity, sessionId, privId):  # noqa: N802,N803
+            if any(p not in known for p in privId):
+                self.asked.append((entity, sessionId, list(privId)))
+                raise ValueError("InvalidArgument")
+            return super().HasPrivilegeOnEntities(entity, sessionId, privId)
+
+    req = {
+        "a": ["Alarm.Acknowledge"],
+        "b": ["Alarm.SetStatus"],
+        "c": ["Certificate.Manage"],
+        "read": ["System.Read", "System.View"],
+    }
+    out = vsphere_access_info(fake_si(Esx(known)), target="esx1", requirements=req)
+    assert out["privileges"]["System.Read"] == "granted_at_root"
+    assert "read" in out["tools_granted_at_root"]
+    assert sorted(out["tools_undetermined"]) == ["a", "b", "c"]

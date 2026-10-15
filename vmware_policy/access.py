@@ -82,7 +82,7 @@ def _unknown_tool(tool: str, requirements: Mapping[str, Sequence[str] | None]) -
     )
 
 
-_GIVE_UP_AFTER = 3  # single asks that may all fail before the fallback stops
+_PROBE = "System.View"  # defined on every vCenter and ESXi
 
 
 def _ask(si: Any, session_key: str, privileges: list[str]) -> dict[str, bool]:
@@ -106,15 +106,21 @@ def _privilege_states(
     failed: dict[str, str] = {}
     try:
         seen = _ask(si, session_key, privileges)
-    except Exception:
+    except Exception as batch_exc:
         seen = {}
-        for p in privileges:
-            if not seen and len(failed) >= _GIVE_UP_AFTER:
-                break  # nothing answers (a dead link): the rest stay undetermined
-            try:
-                seen.update(_ask(si, session_key, [p]))
-            except Exception as exc:  # the class name only: the text can name hosts
-                failed[p] = type(exc).__name__
+        try:
+            # Every host defines System.View. If even it cannot be asked, the
+            # link or the session is the problem: asking each id would only
+            # repeat the same failure once per privilege.
+            _ask(si, session_key, [_PROBE])
+        except Exception:
+            failed = {p: type(batch_exc).__name__ for p in privileges}
+        else:
+            for p in privileges:
+                try:
+                    seen.update(_ask(si, session_key, [p]))
+                except Exception as exc:  # the class name only: the text can name hosts
+                    failed[p] = type(exc).__name__
     states = {
         p: (GRANTED if seen[p] else NOT_GRANTED) if p in seen else UNDETERMINED for p in privileges
     }

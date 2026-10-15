@@ -15,7 +15,7 @@
   summary with any undetermined tool says so rather than "granted". A table entry of `None` marks a tool decided by a permission
   vSphere cannot report here (e.g. a Supervisor namespace role): always `undetermined`. If the target refuses the batch
   (ESXi does not define vCenter-only privileges), each privilege is asked on its own, so only the ones it cannot
-  check become `undetermined`. Names that come from the platform (account, role, object) are sanitized;
+  check become `undetermined`; if even System.View cannot be asked (a dead link), it stops there. Names that come from the platform (account, role, object) are sanitized;
   `unknown_tool_message(tool, requirements)` lets a skill refuse a misspelled tool name before it connects.
 * Every offloaded call now runs in a call scope. A returned iterator is drained inside it.
 * The per-skill config loader (`mtime_cached_loader`) checks and reloads under a lock, so concurrent first calls
