@@ -7,9 +7,10 @@
   `X-Request-ID`, else `X-Correlation-ID`, reduced to `[A-Za-z0-9._:-]` and 128 characters, in a new
   `correlation_id` column (existing databases migrate in place; older rows, stdio and CLI read `''`).
   `vmware-audit log --correlation-id ID` filters by it, so a platform trace can be joined to this server's rows.
-* **Role-less vSphere accounts (AIops#47).** `vmware_policy.access.login_has_no_session(si)` recognises a login that
-  succeeded but has no session (an account with no vSphere role); `no_role_message(target, cli)` is the shared
-  teaching error the vSphere skills raise at connect time. `get_access_info`'s reason for a missing session now
+* **Role-less vSphere accounts (AIops#47).** `vmware_policy.access.login_has_no_session(si)` is True only when a login
+  succeeded, vCenter shows no session for it, **and** a container view on the root folder is refused
+  (NotAuthenticated / NoPermission) — so an account scoped to one folder, or holding only namespace permissions, is
+  never refused. `no_role_message(target, cli)` is the shared teaching error the vSphere skills raise at connect time. `get_access_info`'s reason for a missing session now
   names the role.
 
 ## v1.22.0 — session pools and access self-diagnosis (HLD §16 D-13(2), §17 D-17)
