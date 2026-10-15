@@ -45,6 +45,7 @@ class ServeOptions:
     public_names: tuple[str, ...] = ()
     token_path: Path | None = None
     idle_timeout: float = 1800.0
+    pooled: bool = False
 
 
 _HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
@@ -165,7 +166,7 @@ def configure(server: Any, opts: ServeOptions) -> str:
     # The SDK takes the verifier only in its constructor; our servers are built
     # at import time, so it is set here, before streamable_http_app() reads it.
     server._token_verifier = FileTokenVerifier(store)
-    offload_sync_tools(server)
+    offload_sync_tools(server, pooled=opts.pooled)
     set_process_surface(surface)
     return surface
 
@@ -245,12 +246,15 @@ def run_server(
     key: str | None = None,
     public_name: str | None = None,
     token_file: str | None = None,
+    pooled: bool = False,
 ) -> None:
     """What every skill's ``main()`` calls: apply exposure, check the transport, serve.
 
     Arguments are the ``<cli> mcp`` flags (None when not given). A setting that
     cannot be honoured stops the process with exit code 2 and the reason on
-    stderr, before anything binds.
+    stderr, before anything binds. ``pooled`` is the skill's declaration that
+    its connections come from ``vmware_policy.pool.SessionPool`` (D-13(2)), so
+    calls on one target may run side by side.
     """
     from vmware_policy.exposure import apply_or_exit
 
@@ -265,6 +269,7 @@ def run_server(
         keyfile=Path(key).expanduser() if key else None,
         public_names=names,
         token_path=Path(token_file).expanduser() if token_file else None,
+        pooled=pooled,
     )
     try:
         run(server, opts)

@@ -180,7 +180,7 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
 - Calls naming the same `target` run one at a time; calls naming different targets run in parallel; a call that
   names no target (the skill's default target, or a tool without a `target` parameter) runs alone. Waiting calls
   are served first come, first served, so neither kind can starve the other; to get parallelism, name the target.
-  The runaway breaker is per caller.
+  The runaway breaker is per caller. Skills that keep a session pool (below) lift these limits.
 - A session can only be used by the token name that created it (the SDK enforces this). Revoking a token and
   creating a new one under the same name lets the new token continue the old sessions, so use a new name when a
   token leaks. Idle sessions expire after 30 minutes.
@@ -190,6 +190,25 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
   all three get 401.
 - **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
   at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
+
+## Session pools
+
+A skill that connects to a platform can keep a small pool of sessions per target
+(`vmware_policy.pool.SessionPool`, `VMWARE_MCP_POOL_SIZE`, default 2) and start its server with
+`run_server(..., pooled=True)`. Over a network transport each call then holds its own session per target for its whole
+body (result serialization included), so calls on one target run side by side up to the pool size and calls that
+name no target are not serialized. A call that already holds a session never waits for another target; if that
+target's pool is busy it gets a temporary extra session, so multi-target calls cannot deadlock. A call that waits
+longer than 300 s for a session gets an error naming the target. Each session is a login on the target. stdio and
+the CLI keep one cached session per target.
+
+## Access self-diagnosis
+
+`vmware_policy.access.vsphere_access_info(si, target=, requirements=, tool=)` backs each vSphere skill's
+`get_access_info` tool: the account the target uses, the privileges each tool needs (from the skill's
+requirements table) and whether the current session holds them on the root folder
+(`AuthorizationManager.HasPrivilegeOnEntities`, which needs only System.View). "Not granted at the root" is not
+"no access": permissions on specific objects are not covered. A lookup that fails is `undetermined`, never granted.
 
 ## Risk levels
 

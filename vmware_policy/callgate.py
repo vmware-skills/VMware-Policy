@@ -18,6 +18,12 @@ The whole ``@vmware_tool`` body (policy pre-check, the call, the returned-
 failure signal, the audit row) runs inside the worker with the caller's
 context copied in, so the signal is read where it was set ([H6]) and the audit
 sees the authenticated caller.
+
+Pooled skills (D-13(2)): a skill whose connections come from
+``vmware_policy.pool.SessionPool`` holds its own session per call, so the gate
+is not needed and is skipped (``pooled=True``). Every offloaded call runs in a
+``call_scope`` and its result is serialized inside the worker, while the
+call's sessions are still held — pyVmomi reads properties lazily [H7].
 """
 
 from __future__ import annotations
@@ -29,6 +35,8 @@ from typing import Any
 
 import anyio
 import anyio.to_thread
+
+from vmware_policy.pool import call_scope
 
 
 class CallGate:
@@ -97,6 +105,33 @@ class CallGate:
                 self._cond.notify_all()
 
 
+def _materialize(result: Any) -> None:
+    """Serialize once so lazily-read properties are fetched while the session is held."""
+    try:
+        import pydantic_core
+
+        pydantic_core.to_json(result, fallback=str)
+    except Exception:  # FastMCP reports a result it cannot serialize itself
+        pass
+
+
+def _in_scope(fn: Any, kwargs: dict[str, Any]) -> Any:
+    with call_scope():
+        result = fn(**kwargs)
+        _materialize(result)
+        return result
+
+
+def _pooled(fn: Any) -> Any:
+    @functools.wraps(fn)
+    async def run(**kwargs: Any) -> Any:
+        return await anyio.to_thread.run_sync(
+            functools.partial(_in_scope, fn, kwargs), abandon_on_cancel=False
+        )
+
+    return run
+
+
 def _offloaded(fn: Any, gate: CallGate, takes_target: bool) -> Any:
     @functools.wraps(fn)
     async def run(**kwargs: Any) -> Any:
@@ -112,7 +147,7 @@ def _offloaded(fn: Any, gate: CallGate, takes_target: bool) -> Any:
             # worker to finish, so the target is not released while that thread
             # is using its session.
             return await anyio.to_thread.run_sync(
-                functools.partial(fn, **kwargs), abandon_on_cancel=False
+                functools.partial(_in_scope, fn, kwargs), abandon_on_cancel=False
             )
         finally:
             # Shielded: a cancelled scope would otherwise raise on the lock
@@ -124,20 +159,24 @@ def _offloaded(fn: Any, gate: CallGate, takes_target: bool) -> Any:
     return run
 
 
-def offload_sync_tools(server: Any, gate: CallGate | None = None) -> int:
-    """Replace each registered synchronous tool's callable with a gated, threaded one.
+def offload_sync_tools(server: Any, gate: CallGate | None = None, *, pooled: bool = False) -> int:
+    """Replace each registered synchronous tool's callable with a threaded one.
 
-    Uses the SDK's ``Tool.fn`` / ``Tool.is_async`` (mcp<2.0); the argument
-    model was built from the original signature and is unchanged. Returns the
-    number of tools offloaded.
+    Gated per target unless ``pooled`` (the skill's sessions come from a
+    ``SessionPool``). Uses the SDK's ``Tool.fn`` / ``Tool.is_async`` (mcp<2.0);
+    the argument model was built from the original signature and is unchanged.
+    Returns the number of tools offloaded.
     """
     gate = gate or CallGate()
     count = 0
     for tool in server._tool_manager.list_tools():
         if tool.is_async:
             continue
-        takes_target = "target" in inspect.signature(tool.fn).parameters
-        tool.fn = _offloaded(tool.fn, gate, takes_target)
+        if pooled:
+            tool.fn = _pooled(tool.fn)
+        else:
+            takes_target = "target" in inspect.signature(tool.fn).parameters
+            tool.fn = _offloaded(tool.fn, gate, takes_target)
         tool.is_async = True
         count += 1
     return count

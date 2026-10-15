@@ -166,7 +166,7 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 - 每条审计记录都写明调用者 `token:<名字>` 和接入方式（`mcp-https`、`mcp-http-loopback`）。
 - 写明同一个 `target` 的调用依次执行，写明不同 target 的调用并行；没有写 target 的调用（即用 skill 的默认 target，
   或工具本身没有 `target` 参数）独占执行。等待中的调用按先来先服务处理，哪一类都不会把另一类饿死；想要并行，
-  请写明 target。失控熔断按调用者分别计算。
+  请写明 target。失控熔断按调用者分别计算。使用会话池的 skill（见下）不受这些限制。
 - 一个会话只能由创建它的那个 token 名字使用（由 SDK 保证）。吊销一个 token 后用同样的名字新建，新 token 可以接着用
   旧会话，所以 token 泄露时请换一个新名字。空闲会话 30 分钟后过期。
 - deny 规则可以按调用者限定：在 `$OPS_HOME/rules.yaml` 里写 `clients: ["intern-*"]`，只对这些 token 名字生效
@@ -174,6 +174,22 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 - 绑定端口之前，server 会先向自己发送不带 token 的 POST/GET/DELETE 请求，三个都得到 401 才会启动。
 - **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
   按可以互相看到工作内容的人群，各开一个端点。
+
+## 会话池
+
+连接平台的 skill 可以为每个 target 维护一个小的会话池（`vmware_policy.pool.SessionPool`，`VMWARE_MCP_POOL_SIZE`，
+默认 2），并用 `run_server(..., pooled=True)` 启动 server。通过网络方式访问时，每个调用在整个执行过程中（包括结果
+序列化）独占自己在每个 target 上的会话，所以同一 target 的调用可以并行，最多到池的大小；没有写 target 的调用也不再
+逐个执行。已经持有会话的调用不会等待另一个 target：那个 target 的池满时，它会拿到一个临时的额外会话，所以跨 target
+的调用不会死锁。等会话超过 300 秒的调用会收到一条写明 target 的错误。每个会话都是 target 上的一次登录。stdio 和 CLI
+仍然每个 target 缓存一个会话。
+
+## 权限自诊断
+
+`vmware_policy.access.vsphere_access_info(si, target=, requirements=, tool=)` 是各 vSphere skill 的 `get_access_info`
+工具的实现：target 使用哪个账号、每个工具需要哪些权限（来自 skill 的需求表），以及当前会话在根文件夹上是否持有这些
+权限（`AuthorizationManager.HasPrivilegeOnEntities`，只需要 System.View）。"根上未授予"不等于"没有权限"：具体对象
+上的授权不在检查范围内。查询失败记为 `undetermined`，绝不当作已授予。
 
 ## 风险等级
 
