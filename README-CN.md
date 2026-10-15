@@ -23,6 +23,31 @@ def delete_segment(name: str, env: str = "") -> dict:
     ...
 ```
 
+## 报告工具*返回*的失败
+
+大多数工具用抛异常表示失败，`@vmware_tool` 会记录下来。而捕获异常、返回一个错误载荷的工具，
+看起来和一次成功调用一模一样——很长时间里它也确实被记成了成功，这同时意味着会为从未发生的变更
+写入撤销令牌，熔断器也从来看不到失败。
+
+现在 dict 形状的载荷会被自动识别。工具只要返回家族约定的形状，就什么都不用做：
+
+```python
+return {"error": msg, "hint": "Run 'vmware-nsx doctor'."}   # 记为失败
+```
+
+返回类型带不了这个标记的工具——比如返回控制台文本的——必须显式说明：
+
+```python
+from vmware_policy import report_tool_failure
+
+except Exception as exc:
+    report_tool_failure(str(exc))
+    return f"Error: {msg}"
+```
+
+字符串是刻意不去嗅探的：返回控制台输出的 skill 可能把以 "Error:" 开头的文本当作*数据*输出，
+把这些调用标为失败，就是方向相反的同一种误报。
+
 ## CLI 命令
 
 ```bash
@@ -45,7 +70,7 @@ vmware-audit policy          # 查看当前生效的规则
 ## 架构
 
 ```
-AI Agent -> vmware-pilot（按需编排）-> @vmware_tool 前置检查 -> skill 操作 -> 后置审计 -> ~/.vmware/audit.db
+AI Agent -> vmware-pilot（按需编排）-> @vmware_tool 前置检查 -> skill 操作 -> 写一条审计记录 -> ~/.vmware/audit.db
 ```
 
 vmware-policy 是所有 VMware 技能的**强制依赖**，提供：
@@ -124,6 +149,11 @@ change_limits:
 | **vmware-nsx-security** | NSX 安全（DFW + 安全组） | `uv tool install vmware-nsx-security` |
 | **vmware-aria** | Aria Ops 指标/告警/容量 | `uv tool install vmware-aria` |
 | **vmware-avi** | AVI/ALB 负载均衡 | `uv tool install vmware-avi` |
+| **vmware-harden** | 合规基线 + Drift 检测 | `uv tool install vmware-harden` |
+| **vmware-vdi** | Horizon VDI 运维 | `uv tool install vmware-vdi` |
+| **vmware-privateai** | Private AI GPU / 模型服务运维 | `uv tool install vmware-privateai` |
+| **vmware-debug** | 故障关联 / 根因 | `uv tool install vmware-debug` |
+| **vmware-log-insight** | 集中日志检索 | `uv tool install vmware-log-insight` |
 | **vmware-pilot** | 多步骤工作流编排 | `uv tool install vmware-pilot` |
 | **vmware-policy** | 审计 + 策略（本包） | `uv tool install vmware-policy` |
 
