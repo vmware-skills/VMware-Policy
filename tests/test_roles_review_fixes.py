@@ -190,3 +190,26 @@ def test_roles_enabled_with_no_registry_refuses_to_serve(enabled):  # noqa: F811
     roles.metadata("storage").registry = {}
     with pytest.raises(serve.ServeError, match="registry could not be read"):
         serve.configure(_server(), serve.ServeOptions(skill="storage", transport="http"))
+
+
+@pytest.mark.unit
+def test_a_broken_roles_file_is_not_described_to_the_caller(enabled, ops_home):  # noqa: F811
+    """The caller learns where to look; server paths and parser output stay in the log."""
+    (ops_home / "roles.yaml").write_text("roles: [", encoding="utf-8")
+    _, results = _list_and_calls(enabled["ops"], [("get_thing", {})])
+    text = results[0]["content"][0]["text"]
+    assert _refused(results[0]) and "roles check" in text
+    assert str(ops_home) not in text and "roles.yaml" not in text
+
+
+@pytest.mark.unit
+def test_roles_check_says_what_it_did_not_check(ops_home):  # noqa: F811
+    from typer.testing import CliRunner
+
+    from vmware_policy.cli import app
+
+    off = CliRunner().invoke(app, ["roles", "check"])
+    assert off.exit_code == 0 and "not enabled" in off.output
+    tokens.enable_roles()
+    on = CliRunner().invoke(app, ["roles", "check"])
+    assert on.exit_code == 0 and "Not checked here" in on.output

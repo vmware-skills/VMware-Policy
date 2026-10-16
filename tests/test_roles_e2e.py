@@ -151,7 +151,8 @@ def test_custom_role_allow_write_and_targets(enabled, ops_home):  # noqa: F811
             ("get_thing", {}),  # default target resolves to vc-prod-1
         ],
     )
-    assert names == ["get_everything", "get_thing", "set_thing"]
+    # get_everything reads every target: refused per call, so not offered either.
+    assert names == ["get_thing", "set_thing"]
     ok, lab, wipe, everything, default = results
     assert not _refused(ok) and not _refused(default)
     assert _refused(lab) and "outside this role" in lab["content"][0]["text"]

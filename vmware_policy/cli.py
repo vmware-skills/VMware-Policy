@@ -526,15 +526,22 @@ def roles_check(
 ) -> None:
     """Exit 1 when a role is unusable or a token is refused; prints why."""
     from vmware_policy.roles import RoleFile
-    from vmware_policy.tokens import TokenError, list_token_info
+    from vmware_policy.tokens import TokenError, list_token_info, roles_enabled
 
+    path = _token_path(token_file_opt)
+    if not roles_enabled(path):
+        typer.echo(
+            "Roles are not enabled on this host: every token is admin. "
+            "Run 'vmware-audit roles enable' to turn them on.",
+            err=True,
+        )
     bad = 0
     store = RoleFile()
     for name, why in sorted(store.problems().items()):
         typer.echo(f"role {name}: {why}")
         bad += 1
     try:
-        infos = list_token_info(_token_path(token_file_opt))
+        infos = list_token_info(path)
     except TokenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
@@ -549,7 +556,13 @@ def roles_check(
             bad += 1
     if bad:
         raise typer.Exit(1)
-    typer.echo("All roles and tokens are usable.", err=True)
+    typer.echo(
+        "roles.yaml loads and every token has a usable role. Not checked here (servers "
+        "check per call and name the tool when they refuse): whether the tools a role "
+        "names exist in each skill, and whether a role allows every tool a composite "
+        "tool can run.",
+        err=True,
+    )
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import logging
 import os
 import re
 import threading
@@ -41,6 +42,7 @@ TOOLS_MODES = ("read", "*")
 TARGET_SCOPES = ("one", "all", "none")
 _ROLE_KEYS = frozenset({"skills", "approve"})
 _GRANT_KEYS = frozenset({"tools", "allow_write", "allow_escape", "targets"})
+_log = logging.getLogger("vmware_policy.roles")
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _NETWORK_SURFACES = ("mcp-https", "mcp-http-loopback")
 
@@ -516,7 +518,12 @@ def visible(role: Role, skill: str, tool: str) -> bool:
     meta = metadata(skill)
     if meta is None or meta.version == 0:
         return False
-    return _tool_allowed(role, meta, skill, tool) is None
+    if _tool_allowed(role, meta, skill, tool) is not None:
+        return False
+    # A tool that reads every target is refused per call to a target-limited role;
+    # do not offer it (integration review, LOW).
+    grant = (role.skills or {}).get(skill) if role is not READER else None
+    return not (grant and grant.targets is not None and meta.scope_of(tool) == "all")
 
 
 def is_network_process() -> bool:
@@ -600,8 +607,15 @@ def check_call(skill: str, tool: str, params: Mapping[str, Any]) -> Decision | N
         return Decision(True, "")
     role, role_name, why = caller_role()
     if role is None:
+        # The detail names server paths and parser output: the operator's log gets it,
+        # the caller gets where to look (integration review, LOW).
+        _log.warning("role %r refused for this call: %s", role_name, why)
         return Decision(
-            False, role_name, "role:invalid", f"Role {role_name!r} cannot be used: {why}."
+            False,
+            role_name,
+            "role:invalid",
+            f"Role {role_name!r} cannot be used on this server; an operator can run "
+            "'vmware-audit roles check' there to see why.",
         )
     unknown = _unknown_names(role, canonical_skill(skill))
     if unknown:
