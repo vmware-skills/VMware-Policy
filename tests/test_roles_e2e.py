@@ -250,3 +250,28 @@ def test_a_pre_2_0_name_in_allow_write_is_not_unknown(enabled, ops_home):  # noq
 
     role, _ = RoleFile(ops_home / "roles.yaml").get("ops")
     assert _unknown_names(role, "storage") == []
+
+
+@pytest.mark.unit
+def test_target_addresses_are_shown_to_admin_only(enabled):
+    def server_with_targets():
+        server = _server()
+        server._mcp_server.instructions = (
+            "Storage ops. Configured targets: vc-prod-1 (vcenter, 10.0.0.5, default); "
+            "vc-lab (vcenter, 10.9.9.9). Choosing a target: ..."
+        )
+        serve._record_registry(server, "storage")
+        serve.configure(server, serve.ServeOptions(skill="storage", transport="http"))
+        return server
+
+    def instructions(secret):
+        async def go(c):
+            r, _, _ = await _session(c, secret)
+            return _sse_json(r.text)["result"].get("instructions", "")
+
+        return _run_app(server_with_targets(), go)
+
+    reader = instructions(enabled["reader"])
+    assert "10.0.0.5" not in reader and "not listed for this role" in reader
+    assert reader.endswith("Choosing a target: ...")
+    assert "10.0.0.5" in instructions(enabled["admin"])

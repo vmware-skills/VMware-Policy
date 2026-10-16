@@ -263,3 +263,35 @@ def test_visible_matches_decide_for_tools():
     assert visible(role, "storage", "rescan_storage")
     assert not visible(role, "storage", "enable_iscsi")
     assert visible(ADMIN, "storage", "enable_iscsi")
+
+
+def test_a_target_argument_means_scope_one_without_a_tag():
+    roles.register_registry(
+        "storage", {"list_hosts": True}, target_params={"list_hosts"}
+    )
+    role = _role("storage-operator")
+    assert decide(role, "storage", "list_hosts", {"target": "vc-prod-3"}).allowed
+    assert not decide(role, "storage", "list_hosts", {"target": "vc-lab"}).allowed
+
+
+def test_host_path_tools_escape_only_while_a_file_root_is_set(monkeypatch):
+    roles.register_registry(
+        "storage", {"export_report": True}, host_path_tools={"export_report"}
+    )
+    monkeypatch.delenv("VMWARE_MCP_FILE_ROOT", raising=False)
+    assert decide(READER, "storage", "export_report", {}).allowed
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", "/srv/vmware-files")
+    d = decide(READER, "storage", "export_report", {})
+    assert not d.allowed and "more than read" in d.reason
+
+
+def test_a_skill_may_name_its_target_argument_differently():
+    roles.declare_role_metadata(
+        "avi", target_param="controller", target_scope={"list_virtual_services": "one"},
+        resolver=lambda t: t or "ctrl-prod",
+    )
+    roles.register_registry("avi", {"list_virtual_services": True})
+    text = GOOD.replace("      vmware-monitor:", "      avi: { tools: read, allow_write: [], allow_escape: [], targets: [ctrl-prod] }\n      vmware-monitor:")
+    role = parse_roles(text)[0]["storage-operator"]
+    assert decide(role, "avi", "list_virtual_services", {"controller": None}).allowed
+    assert not decide(role, "avi", "list_virtual_services", {"controller": "ctrl-lab"}).allowed

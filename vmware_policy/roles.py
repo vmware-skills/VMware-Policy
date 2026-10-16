@@ -256,8 +256,29 @@ class SkillMeta:
     reaches: Mapping[str, frozenset[str]]
     target_scope: Mapping[str, str]
     resolver: Callable[[str | None], str] | None
+    #: The argument that names a target ("target"; AVI calls it "controller").
+    target_param: str = "target"
+    #: Scope of a tool with no tag and no target argument: "all" (default, fail closed)
+    #: or "one" for a skill whose untargeted tools act on its default target (AVI).
+    untagged_scope: str = "all"
     #: Every tool of the server and whether its readOnlyHint is exactly True.
     registry: dict[str, bool] = field(default_factory=dict)
+    #: Tools that take a ``target`` argument (scope ``one`` unless declared otherwise).
+    target_params: frozenset[str] = frozenset()
+    #: Tools with a host-path parameter: escape tools while a file root is set.
+    host_path_tools: frozenset[str] = frozenset()
+
+    def all_escapes(self) -> frozenset[str]:
+        from vmware_policy.hostpaths import FILE_ROOT_ENV
+
+        if os.environ.get(FILE_ROOT_ENV, "").strip():
+            return self.escapes | self.host_path_tools
+        return self.escapes
+
+    def scope_of(self, tool: str) -> str:
+        if tool in self.target_scope:
+            return self.target_scope[tool]
+        return "one" if tool in self.target_params else self.untagged_scope
 
 
 _META: dict[str, SkillMeta] = {}
@@ -272,6 +293,8 @@ def declare_role_metadata(
     reaches: Mapping[str, Iterable[str]] | None = None,
     target_scope: Mapping[str, str] | None = None,
     resolver: Callable[[str | None], str] | None = None,
+    target_param: str = "target",
+    untagged_scope: str = "all",
 ) -> None:
     """A skill states what policy cannot infer (HLD §18 D-21/D-22).
 
@@ -280,10 +303,12 @@ def declare_role_metadata(
     deferred tool, every tool it can end up running. ``target_scope``: ``one`` /
     ``all`` / ``none`` per tool; an untagged tool counts as ``all``. ``resolver``:
     maps a ``target`` argument (or None) to the canonical target name the
-    connection will use.
+    connection will use. ``target_param``: the argument that names a target.
     """
     if version != 1:
         raise ValueError(f"role metadata version {version} is not supported (expected 1)")
+    if untagged_scope not in ("one", "all"):
+        raise ValueError(f"untagged_scope must be 'one' or 'all', got {untagged_scope!r}")
     scopes = dict(target_scope or {})
     bad = {t: s for t, s in scopes.items() if s not in TARGET_SCOPES}
     if bad:
@@ -297,12 +322,26 @@ def declare_role_metadata(
             reaches={t: frozenset(r) for t, r in (reaches or {}).items()},
             target_scope=scopes,
             resolver=resolver,
+            target_param=target_param,
+            untagged_scope=untagged_scope,
             registry=old.registry if old else {},
+            target_params=old.target_params if old else frozenset(),
+            host_path_tools=old.host_path_tools if old else frozenset(),
         )
 
 
-def register_registry(skill: str, tools: Mapping[str, bool]) -> None:
-    """Record every tool of this server and whether it only reads (before exposure)."""
+def register_registry(
+    skill: str,
+    tools: Mapping[str, bool],
+    *,
+    target_params: Iterable[str] = (),
+    host_path_tools: Iterable[str] = (),
+) -> None:
+    """Record every tool of this server and whether it only reads (before exposure).
+
+    ``target_params``: tools whose schema has a ``target`` argument.
+    ``host_path_tools``: tools with a host-path parameter (``hostpaths.HOST_PATH_PARAMS``).
+    """
     key = canonical_skill(skill)
     with _META_LOCK:
         meta = _META.get(key)
@@ -312,6 +351,8 @@ def register_registry(skill: str, tools: Mapping[str, bool]) -> None:
             meta = SkillMeta(0, frozenset(), {}, {}, None)
             _META[key] = meta
         meta.registry = dict(tools)
+        meta.target_params = frozenset(target_params)
+        meta.host_path_tools = frozenset(host_path_tools)
 
 
 def metadata(skill: str) -> SkillMeta | None:
@@ -335,7 +376,7 @@ def _names(skill: str, tool: str) -> set[str]:
 def _granted(grant: SkillGrant, meta: SkillMeta, skill: str, tool: str) -> str | None:
     """None when ``grant`` allows ``tool`` itself (targets aside); else why not."""
     names = _names(skill, tool)
-    if tool in meta.escapes:
+    if tool in meta.all_escapes():
         if names & grant.allow_escape:
             return None
         return (
@@ -354,7 +395,7 @@ def _tool_allowed(role: Role, meta: SkillMeta, skill: str, tool: str) -> str | N
     if role is ADMIN:
         return None
     if role is READER:
-        if tool in meta.escapes:
+        if tool in meta.all_escapes():
             return f"{tool} gives its holder more than read access"
         return None if meta.registry.get(tool) is True else f"{tool} changes the platform"
     grant = (role.skills or {}).get(skill)
@@ -379,14 +420,14 @@ def _target_allowed(
     grant = (role.skills or {}).get(skill)
     if grant is None or grant.targets is None:
         return None
-    scope = meta.target_scope.get(tool, "all")
+    scope = meta.scope_of(tool)
     if scope == "none":
         return None
     if scope == "all":
         return f"{tool} reads every target; this role is limited to {', '.join(grant.targets)}"
     if meta.resolver is None:
         return "this skill cannot name its default target, so a target-limited role cannot use it"
-    raw = params.get("target")
+    raw = params.get(meta.target_param)
     try:
         name = meta.resolver(str(raw) if raw else None)
     except Exception as exc:  # noqa: BLE001 — an unknown target is a refusal, not a crash
@@ -532,3 +573,24 @@ def filter_tools(skill: str, tools: list[Any]) -> list[Any]:
     if role is None:
         return []
     return [t for t in tools if visible(role, skill, getattr(t, "name", ""))]
+
+
+_TARGETS_SENTENCE = re.compile(r"Configured targets: .*?\.(?=\s|$)", re.S)
+_TARGETS_HIDDEN = (
+    "Configured targets: not listed for this role (each result names the target that "
+    "answered; ask an operator which targets your role may use)."
+)
+
+
+def instructions_for_caller(text: str | None) -> str | None:
+    """Server instructions for the current caller (HLD §18 D-21(5)).
+
+    The skills list every target with its address. Once roles are enabled, only
+    ``admin`` sees that list; other roles get one line instead.
+    """
+    if not text or not roles_enabled():
+        return text
+    role, _name, _why = caller_role()
+    if role is ADMIN:
+        return text
+    return _TARGETS_SENTENCE.sub(_TARGETS_HIDDEN, text)

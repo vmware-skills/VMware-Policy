@@ -244,6 +244,21 @@ def _bind_roles(server: Any, opts: ServeOptions, store: TokenStore) -> None:
 
     low.list_tools()(list_tools_for_caller)
 
+    # Instructions are built per session, inside the request that opens it, so the
+    # caller is known there; non-admin roles do not get the target address list.
+    make_options = getattr(low, "create_initialization_options", None)
+    if callable(make_options):
+
+        def options_for_caller(*args: Any, **kwargs: Any) -> Any:
+            options = make_options(*args, **kwargs)
+            text = getattr(options, "instructions", None)
+            shown = roles.instructions_for_caller(text)
+            if shown == text:
+                return options
+            return options.model_copy(update={"instructions": shown})
+
+        low.create_initialization_options = options_for_caller
+
 
 def assert_auth_enforced(app: Any, path: str, opts: ServeOptions) -> None:
     """Before binding: an unauthenticated POST/GET/DELETE to the MCP path must get 401.
@@ -326,12 +341,20 @@ def _record_registry(server: Any, skill: str) -> None:
             file=sys.stderr,
         )
         return
+    from vmware_policy.hostpaths import HOST_PATH_PARAMS
+
+    def props(t: Any) -> set[str]:
+        schema = getattr(t, "inputSchema", None) or {}
+        return set((schema.get("properties") or {}) if isinstance(schema, dict) else {})
+
     roles.register_registry(
         skill,
         {
             t.name: getattr(getattr(t, "annotations", None), "readOnlyHint", None) is True
             for t in tools
         },
+        target_params={t.name for t in tools if {"target", "controller"} & props(t)},
+        host_path_tools={t.name for t in tools if props(t) & HOST_PATH_PARAMS},
     )
 
 
