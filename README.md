@@ -231,26 +231,34 @@ vmware-audit roles check                       # exit 1 if a role or token canno
       approve: none                      # vmware-pilot approvals: none | any | others
   ```
 
-- **Opting in is one command.** Before `roles enable`, nothing changes. `roles enable` moves every token into
+- **Opting in is one command.** Before `roles enable`, every token keeps working as `admin` and
+  `token create --role` refuses. `roles enable` moves every token into
   `$OPS_HOME/mcp-tokens.v2` (as `admin`, or `--assign NAME=ROLE`) and leaves the old file empty. Servers on this
   host still running an older vmware-policy then refuse every request, so upgrade them in the same change.
-  After it, `token create` needs `--role`.
+  After it, `token create` needs `--role`. `$OPS_HOME/mcp-tokens.v2` must belong to the server's user, in a
+  directory others cannot write.
 - **What a role checks, on every call:** the tool, and the target it resolves to (the default target's real name
   when none is given). A tool that reads every target is refused unless the role's targets for that skill are
   `"*"`. A tool that runs other tools (an AIops plan, a batch, a TTL that deletes later) is allowed only if the
-  role allows every tool it can run. A refused call is audited as `denied` with `rule=role:<name>`; every row
-  carries the caller's role.
+  role allows every tool it can run. A refused call is audited as `denied` with `rule=role:<name>` and counts
+  toward the caller's runaway budget; every row carries the caller's role.
 - **Escape tools** give their holder more than a role: credentials (`issue_*_kubeconfig`), code in a guest, raw
   API paths (Aria `get_api_path`), files on the server host while `VMWARE_MCP_FILE_ROOT` is set. `reader` never
   has them; a custom role gets one only by naming it under `allow_escape`. **A role holding an escape tool is
   equivalent to the account.**
 - **`tools/list` is per caller**: a token is offered only what its role may call. Server instructions list target
-  addresses to `admin` only.
+  addresses to `admin` only. A role that cannot be used (a broken `roles.yaml`, an undefined role) is explained
+  in the server's log, not to the caller.
 - A skill that has not declared role metadata (an older release under this Policy) admits `admin` only.
-- In a server on a network transport, a call that carries no authenticated caller is refused.
+- In a server on a network transport, a call that carries no authenticated caller is refused — from this
+  release, whether or not roles are enabled.
 - Deny rules can name roles: `roles: [reader]` in `rules.yaml`, next to `clients:`.
-- vmware-pilot: `approve: none` cannot approve; `others` cannot approve a workflow its own token created.
-- Token and role changes (`token create/revoke/set-role`, `roles enable`) are audit rows.
+- vmware-pilot: `approve: none` cannot approve; `others` cannot approve a workflow its own token created, edited
+  or confirmed as a draft.
+- Token and role changes (`token create/revoke/set-role`, `roles enable`) are audit rows, and a server writes a
+  `roles_reload` row (the file's SHA-256 and its roles) each time `roles.yaml` changes under it.
+- `roles check` validates `roles.yaml` and the tokens. It cannot see each skill's tools, so a misspelled tool in
+  `allow_write` or a composite whose reach the role does not cover shows up when a server refuses the call.
 - **Roles separate people who reach the platform only through this endpoint.** Someone with the account's
   credentials, or an agent with its own shell and network path to vCenter, is outside them. For a team that must
   never write, a read-only account on its own endpoint is still the stronger answer.

@@ -214,21 +214,26 @@ vmware-audit roles check                       # 有不可用的角色或 token 
       approve: none                      # vmware-pilot 审批：none | any | others
   ```
 
-- **启用只需一条命令。** 执行 `roles enable` 之前一切照旧。它把所有 token 移到 `$OPS_HOME/mcp-tokens.v2`（默认 `admin`，
+- **启用只需一条命令。** 执行 `roles enable` 之前，所有 token 照旧以 `admin` 身份工作，`token create --role` 会被拒绝。它把所有 token 移到 `$OPS_HOME/mcp-tokens.v2`（默认 `admin`，
   或用 `--assign 名字=角色` 指定），旧文件清空。此后同一台机器上仍在运行旧版 vmware-policy 的 server 会拒绝所有请求，
-  所以要在同一次变更里一起升级。启用后 `token create` 必须带 `--role`。
+  所以要在同一次变更里一起升级。启用后 `token create` 必须带 `--role`。`$OPS_HOME/mcp-tokens.v2` 必须属于运行 server 的用户，
+  所在目录不能让其他用户写。
 - **每次调用都检查：** 工具本身，以及它解析出的 target（没给时用默认 target 的真实名字）。会读所有 target 的工具，
   除非角色对该 skill 的 targets 是 `"*"`，否则拒绝。会运行其他工具的工具（AIops 计划、批量操作、到期删除的 TTL），
-  只有角色放开了它能运行的每一个工具才允许。被拒的调用记为 `denied`、`rule=role:<角色>`；每条审计记录都带调用者的角色。
+  只有角色放开了它能运行的每一个工具才允许。被拒的调用记为 `denied`、`rule=role:<角色>`，并计入该调用者的失控熔断预算；每条审计记录都带调用者的角色。
 - **绕开角色的工具**会给持有者超出角色的能力：凭据（`issue_*_kubeconfig`）、在虚机里执行代码、任意 API 路径（Aria
   `get_api_path`）、设置了 `VMWARE_MCP_FILE_ROOT` 时读写服务器本机文件。`reader` 永远不含这些；自定义角色只有在
   `allow_escape` 里逐个列名才拿得到。**持有绕开角色工具的角色，等同于这个账号本身。**
-- **`tools/list` 按调用者过滤**：每个 token 只看到它的角色能调用的工具。server instructions 里的 target 地址只给 `admin` 看。
+- **`tools/list` 按调用者过滤**：每个 token 只看到它的角色能调用的工具。server instructions 里的 target 地址只给 `admin` 看。角色不可用（`roles.yaml` 损坏、角色未定义）的原因写在 server 日志里，
+  不告诉调用者。
 - 没有声明角色元数据的 skill（在新版 Policy 下运行的旧版 skill）只允许 `admin` 使用。
-- 网络模式的 server 里，没有已认证调用者的调用一律拒绝。
+- 网络模式的 server 里，没有已认证调用者的调用一律拒绝——从本版本起，不论是否启用角色。
 - deny 规则可以按角色写：在 `rules.yaml` 里和 `clients:` 并列写 `roles: [reader]`。
-- vmware-pilot：`approve: none` 不能审批；`others` 不能审批自己的 token 创建的工作流。
-- token 和角色的变更（`token create/revoke/set-role`、`roles enable`）都会写入审计。
+- vmware-pilot：`approve: none` 不能审批；`others` 不能审批自己的 token 创建、或在草稿阶段编辑/确认过的工作流。
+- token 和角色的变更（`token create/revoke/set-role`、`roles enable`）都会写入审计；`roles.yaml` 在 server 运行中每次变化，
+  server 都会写一条 `roles_reload` 记录（文件的 SHA-256 和其中的角色）。
+- `roles check` 检查 `roles.yaml` 和 token。它看不到各 skill 的工具，所以 `allow_write` 里拼错的工具名、或角色没覆盖组合工具
+  能运行的工具，要等 server 拒绝调用时才会暴露。
 - **角色只能区分只通过这个端点访问平台的人。** 持有账号凭据的人，或自己有 shell 并且网络能直达 vCenter 的 agent，
   都不在角色的约束之内。某个团队绝对不能写，最可靠的做法仍是给它一个只读账号、单独一个端点。
 

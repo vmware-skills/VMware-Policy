@@ -1,7 +1,10 @@
 ## v1.24.0 — roles for network callers (HLD §18)
 
-Several people or agents can share one HTTPS endpoint with different jobs. Nothing changes until an operator runs
-`vmware-audit roles enable`.
+Several people or agents can share one HTTPS endpoint with different jobs. Existing tokens keep working as before
+(as `admin`) until an operator runs `vmware-audit roles enable`; `token create --role` refuses until then. Two
+things apply from this release either way: audit rows have a `role` column (empty until roles are enabled), and in
+a server on a network transport a call with no authenticated caller is refused (a thread a tool started without
+copying the caller's context, an internal path).
 
 * **Roles.** Built-in `reader` (read tools, every skill and target) and `admin` (everything the server offers);
   custom roles in `$OPS_HOME/roles.yaml` name, per skill, `tools: read | "*"`, `allow_write`, `allow_escape` and
@@ -12,17 +15,26 @@ Several people or agents can share one HTTPS endpoint with different jobs. Nothi
   neither read nor rewrite them. `roles enable` moves every legacy token there (as `admin`, or `--assign NAME=ROLE`)
   and empties the legacy file, so older servers refuse every request rather than run unchecked. After that,
   `token create` needs `--role`. New: `token set-role`, `token list --long`, `roles enable | list | check`.
-* **Enforced on every call** in `@vmware_tool`, before deny rules: the tool, the target it resolves to (a tool that
-  reads every target needs targets `"*"`), and for a composite tool every tool it can run. Refusals are audited as
-  `denied` with `rule=role:<name>`; every audit row has a new `role` column. In a server on a network transport, a
-  call with no authenticated caller is refused.
+  The v2 file must belong to the server's user and sit in a directory others cannot write. Re-running `roles
+  enable` finishes a run that stopped between its two writes, and refuses legacy lines an older `vmware-audit`
+  wrote after opt-in rather than making them `admin`. `roles check` says what it cannot check (tool names per
+  skill, composite reach): servers check those per call and name the tool when they refuse.
+* **Enforced on every call** in `@vmware_tool`, before argument checks and deny rules: the tool, the target it
+  resolves to (a tool that reads every target needs targets `"*"`), and for a composite tool every tool it can run
+  (`reader` too). Refusals are audited as `denied` with `rule=role:<name>` and count toward the per-caller runaway
+  budget. A role that cannot be used is explained in the server's log; the caller is told to run `roles check`.
 * **Escape tools** (credentials, guest code, raw API paths, host files while `VMWARE_MCP_FILE_ROOT` is set) need
   `allow_escape`; `reader` never has them.
-* **Per caller:** `tools/list` shows only what the role may call; server instructions list target addresses to
-  `admin` only. A role change applies from the token's next request.
+* **Per caller:** `tools/list` shows only what the role may call (not tools that read every target, for a
+  target-limited role); server instructions list target addresses to `admin` only. A role change, and a `chmod`
+  of the token or role file, applies from the token's next request.
 * **Skills declare what policy cannot infer** (`vmware_policy.roles.declare_role_metadata`): escape tools, what
   composite tools reach, how a missing target resolves. A skill that has not declared admits `admin` only.
-* Deny rules accept `roles:` next to `clients:`. Token and role changes are audit rows (surface `cli`).
+* Deny rules accept `roles:` next to `clients:`. Token and role changes are audit rows (surface `cli`), and a
+  server writes a `roles_reload` row with the file's SHA-256 and roles each time `roles.yaml` changes under it.
+* Host-path tools may not touch `<token file>.v2`, its lock and temp files, or `roles.yaml`, wherever the token file
+  is. With roles enabled, a server whose tool registry cannot be read refuses to start.
+* A `PolicyDenied` raised inside a tool (vmware-pilot's `approve`, by role) is audited with its rule.
 * `token list` still prints one name per line; `--long` adds role and file.
 
 ## v1.23.1 — tools may not touch this server's own control files (HLD §18 step 0)
