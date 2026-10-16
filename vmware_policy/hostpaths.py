@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 #: Tool parameters that name a file on the server host (not a datastore, guest,
@@ -168,6 +169,13 @@ def file_root_problem(value: str) -> str | None:
             f"{FILE_ROOT_ENV}={value!r} contains the home directory or is the filesystem root, so "
             "it restricts nothing. Point it at a dedicated directory for files tools may use."
         )
+    code = os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for inside in (os.path.realpath(sys.prefix), code):
+        if _inside(inside, root):
+            return (
+                f"{FILE_ROOT_ENV}={value!r} contains this server's own installed code ({inside}), "
+                "which tools could then overwrite. Point it at a dedicated directory."
+            )
     return None
 
 

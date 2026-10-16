@@ -342,3 +342,11 @@ def test_the_file_root_is_not_widened_by_case_folding(home, network_caller, monk
     with pytest.raises(HostPathRefusedError):
         check_host_path(str(tmp_path / "absent-root" / "FILES" / "x"))
     assert check_host_path(str(root / "x")) is None
+
+
+@pytest.mark.unit
+def test_a_file_root_containing_the_servers_code_is_refused(home, monkeypatch):
+    import sys
+
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", os.path.dirname(os.path.realpath(sys.prefix)))
+    assert hostpaths.file_root_problem(os.environ["VMWARE_MCP_FILE_ROOT"]) is not None
