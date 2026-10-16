@@ -193,6 +193,9 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
 - Each audit row records the caller's correlation id: the trace-id of a `traceparent` header, else `X-Request-ID`,
   else `X-Correlation-ID` (safe characters only, up to 128). `vmware-audit log --correlation-id ID` finds the rows
   for one platform request. The id is whatever the caller sends: it joins traces, it proves nothing.
+- Tools that read or write files on this host (guest file transfer, OVA and spec files, kubeconfig output) never
+  touch its configuration, tokens, audit log or TLS key. Over a network transport they are off entirely unless
+  `VMWARE_MCP_FILE_ROOT` names a directory for them; then only paths inside it are allowed.
 - **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
   at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
 

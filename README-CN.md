@@ -177,6 +177,9 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 - 每条审计记录都带上调用方的关联 ID：`traceparent` 头里的 trace-id，没有则取 `X-Request-ID`，再没有取
   `X-Correlation-ID`（只保留安全字符，最长 128）。`vmware-audit log --correlation-id ID` 可以查出平台上某一次请求
   对应的记录。这个 ID 由调用方提供，只用于关联追踪，不能作为证明。
+- 会读写本机文件的工具（虚拟机文件传输、OVA 和部署 spec 文件、kubeconfig 输出）永远碰不到本机的配置、token、审计日志
+  和 TLS 私钥。通过网络访问时，这些工具默认完全不能访问本机文件，除非用 `VMWARE_MCP_FILE_ROOT` 指定一个目录；
+  指定后只允许访问该目录里的路径。
 - **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
   按可以互相看到工作内容的人群，各开一个端点。
 

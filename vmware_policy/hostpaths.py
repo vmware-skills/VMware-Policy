@@ -17,6 +17,10 @@ included — into a protected location:
 * files a running server registered with :func:`register_protected` (the token
   file and TLS certificate and key passed to ``<cli> mcp``).
 
+Device and process paths (``/dev``, ``/proc``) are always refused. Over a
+network transport host files are off unless the operator sets
+``VMWARE_MCP_FILE_ROOT``, and then only paths inside it are allowed.
+
 Each skill calls it where it opens a caller-supplied path, so the MCP tools, the
 CLI, plans and workflows are all covered; ``@vmware_tool`` also checks the
 family's host-path parameter names before a tool runs.
@@ -71,20 +75,69 @@ def protected_roots() -> list[str]:
     return sorted({os.path.realpath(r) for r in roots} | _registered)
 
 
+_DEVICE_ROOTS = ("/dev", "/proc")
+FILE_ROOT_ENV = "VMWARE_MCP_FILE_ROOT"
+
+
+def _fold(path: str) -> str:
+    return os.path.normcase(path).casefold()
+
+
 def _inside(path: str, root: str) -> bool:
+    """``path`` is ``root`` or below it — by name ignoring case, or by file identity.
+
+    The default macOS (and Windows) filesystem ignores case, so ``~/.VMWARE``
+    opens ``~/.vmware``: names are compared case-folded. Identity covers what
+    names cannot (another spelling of the same directory): any existing
+    ancestor of ``path`` that is the same file as ``root`` puts it inside.
+    """
     try:
-        return os.path.commonpath([path, root]) == root
+        if os.path.commonpath([_fold(path), _fold(root)]) == _fold(root):
+            return True
     except ValueError:  # different drives on Windows
         return False
+    if not os.path.exists(root):
+        return False
+    current = path
+    while True:
+        if os.path.exists(current):
+            try:
+                if os.path.samefile(current, root):
+                    return True
+            except OSError:
+                pass
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
+def _network_caller() -> bool:
+    from vmware_policy import caller
+
+    return caller.current_caller() is not None
 
 
 def check_host_path(path: str | os.PathLike[str] | None) -> None:
-    """Raise :class:`HostPathRefusedError` if ``path`` resolves into a protected location."""
+    """Raise :class:`HostPathRefusedError` unless a tool may use ``path`` on this host.
+
+    Always refused: this server's control files (see the module docstring) and
+    device / process paths (``/dev/fd/N`` reaches the server's own open files).
+    Over a network transport host files are off unless the operator sets
+    ``VMWARE_MCP_FILE_ROOT``, and then only paths inside it are allowed: a token
+    holder must not reach ``~/.ssh``, the installed packages or other secrets.
+    """
     if isinstance(path, os.PathLike):
         path = os.fspath(path)
     if not isinstance(path, str) or not path.strip():
         return
     real = os.path.realpath(os.path.expanduser(path))
+    for root in _DEVICE_ROOTS:
+        if _inside(real, root):
+            raise HostPathRefusedError(
+                f"Device and process paths ({root}) are never read or written by tools. "
+                f"Refused: {path}"
+            )
     for root in protected_roots():
         if _inside(real, root):
             raise HostPathRefusedError(
@@ -92,3 +145,17 @@ def check_host_path(path: str | os.PathLike[str] | None) -> None:
                 f"tokens and audit log ({root}); tools may not read or write there. "
                 f"Refused: {path}"
             )
+    if not _network_caller():
+        return
+    allowed = os.environ.get(FILE_ROOT_ENV, "").strip()
+    if not allowed:
+        raise HostPathRefusedError(
+            "Over the network, tools may not read or write files on this server unless the "
+            f"operator sets {FILE_ROOT_ENV} to a directory for them. Refused: {path}"
+        )
+    root = os.path.realpath(os.path.expanduser(allowed))
+    if not _inside(real, root):
+        raise HostPathRefusedError(
+            f"Over the network, tools read and write only inside {FILE_ROOT_ENV} ({root}). "
+            f"Refused: {path}"
+        )

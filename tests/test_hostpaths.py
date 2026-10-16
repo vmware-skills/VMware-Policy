@@ -188,3 +188,79 @@ def test_a_path_object_is_checked_too(home):
     with pytest.raises(HostPathRefusedError):
         check_host_path(Path(home / ".vmware" / "mcp-tokens"))
     assert check_host_path(Path(home / "work" / "x")) is None
+
+
+# ── review 2026-10-16: case, /dev/fd, network allow-list ─────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("rel", [".VMWARE/MCP-TOKENS", ".Vmware/rules.yaml", ".VMWARE-AIOPS/.env"])
+def test_letter_case_does_not_bypass_the_check(home, rel):
+    (home / ".vmware" / "mcp-tokens").write_text("x", encoding="utf-8")
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(str(home / rel))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("p", ["/dev/fd/3", "/dev/stdin", "/proc/self/fd/3", "/proc/1/environ"])
+def test_device_and_proc_paths_are_refused(home, p):
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(p)
+
+
+@pytest.fixture
+def network_caller(monkeypatch):
+    import vmware_policy.caller as caller_mod
+
+    monkeypatch.setattr(caller_mod, "current_caller", lambda: "token:alice")
+    monkeypatch.delenv("VMWARE_MCP_FILE_ROOT", raising=False)
+
+
+@pytest.mark.unit
+def test_over_the_network_host_files_are_off_by_default(home, network_caller):
+    with pytest.raises(HostPathRefusedError, match="VMWARE_MCP_FILE_ROOT"):
+        check_host_path(str(home / "work" / "vm.ova"))
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(str(home / ".ssh" / "authorized_keys"))
+
+
+@pytest.mark.unit
+def test_over_the_network_only_the_file_root_is_allowed(home, network_caller, monkeypatch):
+    root = home / "work" / "mcp-files"
+    root.mkdir()
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", str(root))
+    assert check_host_path(str(root / "vm.ova")) is None
+    assert check_host_path(str(root / "sub" / "out.yaml")) is None
+    for bad in (home / "work" / "vm.ova", home / ".ssh" / "authorized_keys", root / ".." / "x"):
+        with pytest.raises(HostPathRefusedError, match="VMWARE_MCP_FILE_ROOT"):
+            check_host_path(str(bad))
+    # a symlink inside the root that leads out is followed, then refused
+    (root / "out").symlink_to(home / ".ssh", target_is_directory=False)
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(str(root / "out" / "authorized_keys"))
+
+
+@pytest.mark.unit
+def test_a_file_root_inside_a_protected_dir_still_refuses_control_files(
+    home, network_caller, monkeypatch
+):
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", str(home / ".vmware"))
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(str(home / ".vmware" / "mcp-tokens"))
+
+
+@pytest.mark.unit
+def test_stdio_and_cli_keep_the_deny_list_only(home, monkeypatch):
+    monkeypatch.delenv("VMWARE_MCP_FILE_ROOT", raising=False)
+    assert check_host_path(str(home / "work" / "vm.ova")) is None
+
+
+@pytest.mark.unit
+def test_case_is_ignored_even_before_the_protected_dir_exists(tmp_path, monkeypatch):
+    # OPS_HOME not created yet: only the name comparison can protect it, and a
+    # write to ~/.VMWARE/rules.yaml would create the directory and its rules.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OPS_HOME", str(tmp_path / ".vmware"))
+    hostpaths.reset_registered()
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(str(tmp_path / ".VMWARE" / "rules.yaml"))

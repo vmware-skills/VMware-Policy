@@ -8,6 +8,12 @@
   TLS certificate/key a running server was started with. `@vmware_tool` checks the family's host-path parameters
   (`local_path`, `ova_path`, `spec_path`, `manifest_path`, `output_path`) before a tool runs, and each skill also
   checks where it opens the file, so CLI, plans and workflows are covered.
+* **Over a network transport, host files are off unless the operator opts in.** Protecting the control files is not
+  enough when a token holder could still write `~/.ssh/authorized_keys` or the installed packages, or read other
+  secrets. Network callers may use host paths only inside `VMWARE_MCP_FILE_ROOT` (a directory the operator sets);
+  unset, every host path is refused. stdio and the CLI keep the control-file protection only.
+* Names are compared ignoring case (the default macOS filesystem would otherwise let `~/.VMWARE` through) and by file
+  identity; `/dev` and `/proc` paths are always refused.
 * Keep `OPS_HOME` a dedicated directory: everything inside it is off limits to these tools.
 
 ## v1.23.0 — load-balancer health check, request correlation, role-less accounts
