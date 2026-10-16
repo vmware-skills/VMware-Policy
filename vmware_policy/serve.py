@@ -172,6 +172,13 @@ def configure(server: Any, opts: ServeOptions) -> str:
         )
 
     from vmware_policy.callgate import offload_sync_tools
+    from vmware_policy.hostpaths import register_protected
+
+    # Tools that read or write host paths may not touch these (HLD §18 step 0),
+    # wherever the operator keeps them.
+    for path in (store.path, opts.certfile, opts.keyfile):
+        if path is not None:
+            register_protected(path)
 
     names = opts.public_names or ("127.0.0.1", "localhost", "::1")
     schemes = ("https",) if opts.transport == "https" else ("http", "https")

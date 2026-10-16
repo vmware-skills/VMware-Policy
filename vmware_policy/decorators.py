@@ -440,7 +440,15 @@ def _check_common_arguments(params: dict[str, Any], *, cli: bool = False) -> Non
     others — so the message says "default", not "every row". Over MCP the
     schema coerces first (``true`` → 1, ``"5"`` → 5), so the bool/str refusal
     only fires for direct Python calls.
+
+    Host paths (HLD §18 step 0): a parameter named in
+    ``hostpaths.HOST_PATH_PARAMS`` names a file on this server, and may not
+    resolve into its configuration, tokens or audit log.
     """
+    from vmware_policy.hostpaths import HOST_PATH_PARAMS, check_host_path
+
+    for name in HOST_PATH_PARAMS.intersection(params):
+        check_host_path(params[name])
     if "limit" not in params:
         return
     limit = params["limit"]
