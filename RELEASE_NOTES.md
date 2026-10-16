@@ -1,3 +1,15 @@
+## v1.23.1 — tools may not touch this server's own control files (HLD §18 step 0)
+
+* **Security fix.** Tools that read or write a path on the server host (guest file download/upload, OVA and
+  deployment-spec reads, kubeconfig output, bundle manifests) could reach this server's own files. Over HTTPS any
+  token holder could overwrite `$OPS_HOME/mcp-tokens` or `rules.yaml`, or upload a skill's `.env` into a VM.
+  `vmware_policy.hostpaths.check_host_path` now refuses any path that resolves (`~`, `..` and symlinks included)
+  into `$OPS_HOME`, a `~/.vmware-*` skill directory, the directory of a `VMWARE_*_CONFIG` file, or the token file and
+  TLS certificate/key a running server was started with. `@vmware_tool` checks the family's host-path parameters
+  (`local_path`, `ova_path`, `spec_path`, `manifest_path`, `output_path`) before a tool runs, and each skill also
+  checks where it opens the file, so CLI, plans and workflows are covered.
+* Keep `OPS_HOME` a dedicated directory: everything inside it is off limits to these tools.
+
 ## v1.23.0 — load-balancer health check, request correlation, role-less accounts
 
 * **`GET`/`HEAD /healthz` without a token** on the network transports, for a load balancer's probe. It answers
