@@ -44,6 +44,9 @@ def ops_home(tmp_path, monkeypatch):
     from vmware_policy.surface import set_process_surface
 
     set_process_surface("mcp-stdio")
+    from vmware_policy import hostpaths
+
+    hostpaths.set_network_serving(False)
 
 
 def _server(log: list | None = None) -> FastMCP:
@@ -314,6 +317,7 @@ def test_a_cancelled_call_releases_its_target():
 
     async def main():
         async with anyio.create_task_group() as tg:
+
             async def holder():
                 await gate.acquire("vc1")
                 try:
@@ -367,7 +371,9 @@ def test_a_call_without_a_target_runs_alone_even_on_a_target_tool(ops_home):
     async def flow(c):
         _, _, headers = await _session(c, secret)
         async with anyio.create_task_group() as tg:
-            tg.start_soon(_call, c, headers, "get_thing", {"target": "home-vcenter", "delay": 0.3}, 30)
+            tg.start_soon(
+                _call, c, headers, "get_thing", {"target": "home-vcenter", "delay": 0.3}, 30
+            )
             tg.start_soon(_call, c, headers, "get_thing", {"delay": 0.3}, 31)
 
     _run_app(server, flow)
@@ -442,8 +448,12 @@ def test_public_names_are_host_names_only(ops_home, tmp_path, bad):
         serve.configure(
             _server(),
             serve.ServeOptions(
-                skill="storage", transport="https", host="0.0.0.0",
-                certfile=cert, keyfile=cert, public_names=(bad,),
+                skill="storage",
+                transport="https",
+                host="0.0.0.0",
+                certfile=cert,
+                keyfile=cert,
+                public_names=(bad,),
             ),
         )
 

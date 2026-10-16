@@ -41,6 +41,7 @@ HOST_PATH_PARAMS = frozenset(
 
 _CONFIG_ENV = re.compile(r"^VMWARE_[A-Z0-9_]+_CONFIG$")
 _registered: set[str] = set()
+_network_serving = False
 
 
 class HostPathRefusedError(ValueError):
@@ -55,6 +56,16 @@ def register_protected(path: str | os.PathLike[str]) -> None:
 def reset_registered() -> None:
     """For tests."""
     _registered.clear()
+
+
+def set_network_serving(on: bool) -> None:
+    """Mark this process as serving MCP over a network transport (set by ``serve``).
+
+    Process-wide, not per call: a thread a tool starts does not inherit the
+    caller's context, and the network rule must not fail open there.
+    """
+    global _network_serving
+    _network_serving = on
 
 
 def _ops_home() -> str:
@@ -113,9 +124,51 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _network_caller() -> bool:
+    if _network_serving:
+        return True
     from vmware_policy import caller
 
     return caller.current_caller() is not None
+
+
+def _inside_exact(path: str, root: str) -> bool:
+    """Like :func:`_inside` but names compared exactly: used for the allow-list,
+    where folding case would let ``FILES`` (a sibling on a case-sensitive
+    filesystem) through. Identity still catches other spellings of the root."""
+    try:
+        if os.path.commonpath([path, root]) == root:
+            return True
+    except ValueError:
+        return False
+    if not os.path.exists(root):
+        return False
+    current = path
+    while True:
+        if os.path.exists(current):
+            try:
+                if os.path.samefile(current, root):
+                    return True
+            except OSError:
+                pass
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
+def file_root_problem(value: str) -> str | None:
+    """Why ``VMWARE_MCP_FILE_ROOT=value`` would not restrict anything, or None."""
+    expanded = os.path.expanduser(value)
+    if not os.path.isabs(expanded):
+        return f"{FILE_ROOT_ENV} must be an absolute path (got {value!r})."
+    root = os.path.realpath(expanded)
+    home = os.path.realpath(os.path.expanduser("~"))
+    if root == os.path.dirname(root) or _inside(home, root):
+        return (
+            f"{FILE_ROOT_ENV}={value!r} contains the home directory or is the filesystem root, so "
+            "it restricts nothing. Point it at a dedicated directory for files tools may use."
+        )
+    return None
 
 
 def check_host_path(path: str | os.PathLike[str] | None) -> None:
@@ -153,8 +206,11 @@ def check_host_path(path: str | os.PathLike[str] | None) -> None:
             "Over the network, tools may not read or write files on this server unless the "
             f"operator sets {FILE_ROOT_ENV} to a directory for them. Refused: {path}"
         )
+    problem = file_root_problem(allowed)
+    if problem:
+        raise HostPathRefusedError(f"{problem} Refused: {path}")
     root = os.path.realpath(os.path.expanduser(allowed))
-    if not _inside(real, root):
+    if not _inside_exact(real, root):
         raise HostPathRefusedError(
             f"Over the network, tools read and write only inside {FILE_ROOT_ENV} ({root}). "
             f"Refused: {path}"

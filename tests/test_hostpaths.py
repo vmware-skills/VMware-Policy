@@ -31,8 +31,10 @@ def home(tmp_path, monkeypatch):
     for k in [k for k in os.environ if k.startswith("VMWARE_") and k.endswith("_CONFIG")]:
         monkeypatch.delenv(k)
     hostpaths.reset_registered()
+    hostpaths.set_network_serving(False)
     yield home
     hostpaths.reset_registered()
+    hostpaths.set_network_serving(False)
 
 
 @pytest.mark.unit
@@ -152,7 +154,7 @@ def test_vmware_tool_ignores_paths_that_are_not_host_paths(home):
 
 
 @pytest.mark.unit
-def test_serving_https_protects_the_token_file_and_tls_files(home, tmp_path):
+def test_serving_https_protects_the_token_file_and_tls_files(home, tmp_path, monkeypatch):
     pytest.importorskip("mcp")
     from mcp.server.fastmcp import FastMCP
 
@@ -165,6 +167,9 @@ def test_serving_https_protects_the_token_file_and_tls_files(home, tmp_path):
     key.write_text("k", encoding="utf-8")
     token_file = tmp_path / "elsewhere" / "tokens"
     tokens.create_token("alice", token_file)
+    # Serving over the network: host files only inside the file root (here the
+    # pki dir, so the protected key inside it shows the control-file rule wins).
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", str(pki))
     opts = serve.ServeOptions(
         skill="storage",
         transport="https",
@@ -264,3 +269,76 @@ def test_case_is_ignored_even_before_the_protected_dir_exists(tmp_path, monkeypa
     hostpaths.reset_registered()
     with pytest.raises(HostPathRefusedError):
         check_host_path(str(tmp_path / ".VMWARE" / "rules.yaml"))
+
+
+# ── second review 2026-10-16 ─────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", ["/", "~", "relative/dir", "HOME"])
+def test_a_file_root_that_restricts_nothing_is_refused(home, network_caller, monkeypatch, bad):
+    value = str(home) if bad == "HOME" else bad
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", value)
+    with pytest.raises(HostPathRefusedError, match="VMWARE_MCP_FILE_ROOT"):
+        check_host_path(str(home / "work" / "x"))
+
+
+@pytest.mark.unit
+def test_serving_over_the_network_applies_the_rule_in_any_thread(home, monkeypatch):
+    import threading
+
+    monkeypatch.delenv("VMWARE_MCP_FILE_ROOT", raising=False)
+    hostpaths.set_network_serving(True)
+    try:
+        errors = []
+
+        def worker():
+            try:
+                check_host_path(str(home / "work" / "x"))
+            except HostPathRefusedError as exc:
+                errors.append(exc)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(5)
+        assert errors, "a thread a tool started must still apply the network rule"
+    finally:
+        hostpaths.set_network_serving(False)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("sibling", ["FILES", "fileſ"])
+def test_the_file_root_is_matched_by_exact_name(home, network_caller, monkeypatch, sibling):
+    root = home / "work" / "files"
+    root.mkdir()
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", str(root))
+    target = home / "work" / sibling / "x"
+    if (home / "work" / sibling).exists():  # case-insensitive FS: same directory
+        assert check_host_path(str(target)) is None
+    else:
+        with pytest.raises(HostPathRefusedError):
+            check_host_path(str(target))
+
+
+@pytest.mark.unit
+def test_configure_refuses_a_file_root_that_restricts_nothing(home, monkeypatch):
+    pytest.importorskip("mcp")
+    from mcp.server.fastmcp import FastMCP
+
+    from vmware_policy import serve, tokens
+
+    tokens.create_token("alice")
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", "/")
+    with pytest.raises(serve.ServeError, match="VMWARE_MCP_FILE_ROOT"):
+        serve.configure(FastMCP("t"), serve.ServeOptions(skill="storage", transport="http"))
+
+
+@pytest.mark.unit
+def test_the_file_root_is_not_widened_by_case_folding(home, network_caller, monkeypatch, tmp_path):
+    # Neither path exists, so only the names decide: on a case-sensitive
+    # filesystem FILES is a different directory and must stay outside the root.
+    root = tmp_path / "absent-root" / "files"
+    monkeypatch.setenv("VMWARE_MCP_FILE_ROOT", str(root))
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(str(tmp_path / "absent-root" / "FILES" / "x"))
+    assert check_host_path(str(root / "x")) is None
