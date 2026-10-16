@@ -199,6 +199,62 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
 - **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
   at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
 
+## Roles for network callers
+
+Several people or agents can share one HTTPS endpoint with different jobs (vmware-policy ≥ 1.24.0, HLD §18).
+A role limits which tools and targets a token may use **on that endpoint**. It narrows what the server's account
+is used for; it cannot grant more than the account has, so the platform account stays the boundary.
+
+```bash
+vmware-audit roles enable                      # turn roles on; existing tokens become admin
+vmware-audit token create ops-agent --role reader
+vmware-audit token create storage-team --role storage-operator
+vmware-audit token set-role ops-agent admin    # applies from its next request
+vmware-audit token list --long                 # name, role, file
+vmware-audit roles check                       # exit 1 if a role or token cannot be used
+```
+
+- **Built-in roles:** `reader` (tools that only read, every skill, every target) and `admin` (every tool the
+  server offers). Custom roles live in `$OPS_HOME/roles.yaml` (owner-only, owned by the server's user). Every
+  key is required and "all" is spelled `"*"`, so a file cut off mid-edit refuses a role instead of widening it:
+
+  ```yaml
+  roles:
+    storage-operator:
+      skills:
+        storage:
+          tools: read                    # read | "*"
+          allow_write: [rescan_storage]  # write tools on top
+          allow_escape: []               # tools that escape a role, named one by one
+          targets: ["vc-prod-*"]         # target names (globs) for this skill, or "*"
+        monitor: { tools: read, allow_write: [], allow_escape: [], targets: "*" }
+      approve: none                      # vmware-pilot approvals: none | any | others
+  ```
+
+- **Opting in is one command.** Before `roles enable`, nothing changes. `roles enable` moves every token into
+  `$OPS_HOME/mcp-tokens.v2` (as `admin`, or `--assign NAME=ROLE`) and leaves the old file empty. Servers on this
+  host still running an older vmware-policy then refuse every request, so upgrade them in the same change.
+  After it, `token create` needs `--role`.
+- **What a role checks, on every call:** the tool, and the target it resolves to (the default target's real name
+  when none is given). A tool that reads every target is refused unless the role's targets for that skill are
+  `"*"`. A tool that runs other tools (an AIops plan, a batch, a TTL that deletes later) is allowed only if the
+  role allows every tool it can run. A refused call is audited as `denied` with `rule=role:<name>`; every row
+  carries the caller's role.
+- **Escape tools** give their holder more than a role: credentials (`issue_*_kubeconfig`), code in a guest, raw
+  API paths (Aria `get_api_path`), files on the server host while `VMWARE_MCP_FILE_ROOT` is set. `reader` never
+  has them; a custom role gets one only by naming it under `allow_escape`. **A role holding an escape tool is
+  equivalent to the account.**
+- **`tools/list` is per caller**: a token is offered only what its role may call. Server instructions list target
+  addresses to `admin` only.
+- A skill that has not declared role metadata (an older release under this Policy) admits `admin` only.
+- In a server on a network transport, a call that carries no authenticated caller is refused.
+- Deny rules can name roles: `roles: [reader]` in `rules.yaml`, next to `clients:`.
+- vmware-pilot: `approve: none` cannot approve; `others` cannot approve a workflow its own token created.
+- Token and role changes (`token create/revoke/set-role`, `roles enable`) are audit rows.
+- **Roles separate people who reach the platform only through this endpoint.** Someone with the account's
+  credentials, or an agent with its own shell and network path to vCenter, is outside them. For a team that must
+  never write, a read-only account on its own endpoint is still the stronger answer.
+
 ## Session pools
 
 A skill that connects to a platform can keep a small pool of sessions per target

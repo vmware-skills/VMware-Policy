@@ -183,6 +183,55 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 - **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
   按可以互相看到工作内容的人群，各开一个端点。
 
+## 网络调用者的角色
+
+多个人或 agent 可以按不同职责共用一个 HTTPS 端点（vmware-policy ≥ 1.24.0，HLD §18）。角色限定某个 token 在**这个端点上**
+能用哪些工具和 target。它只能收窄 server 账号的用途，不能超出账号本身的权限，平台账号仍然是边界。
+
+```bash
+vmware-audit roles enable                      # 启用角色；已有 token 变成 admin
+vmware-audit token create ops-agent --role reader
+vmware-audit token create storage-team --role storage-operator
+vmware-audit token set-role ops-agent admin    # 从它的下一个请求起生效
+vmware-audit token list --long                 # 名字、角色、所在文件
+vmware-audit roles check                       # 有不可用的角色或 token 时退出码为 1
+```
+
+- **内置角色：** `reader`（所有只读工具、所有 skill、所有 target）和 `admin`（server 提供的全部工具）。自定义角色写在
+  `$OPS_HOME/roles.yaml`（仅属主可读写，属主须是运行 server 的用户）。每个键都必须写，「全部」要写成 `"*"`，这样编辑到一半
+  被截断的文件只会让该角色不可用，而不会把它放宽：
+
+  ```yaml
+  roles:
+    storage-operator:
+      skills:
+        storage:
+          tools: read                    # read | "*"
+          allow_write: [rescan_storage]  # 额外放开的写工具
+          allow_escape: []               # 会绕开角色的工具，须逐个列名
+          targets: ["vc-prod-*"]         # 该 skill 的 target 名（可用通配），或 "*"
+        monitor: { tools: read, allow_write: [], allow_escape: [], targets: "*" }
+      approve: none                      # vmware-pilot 审批：none | any | others
+  ```
+
+- **启用只需一条命令。** 执行 `roles enable` 之前一切照旧。它把所有 token 移到 `$OPS_HOME/mcp-tokens.v2`（默认 `admin`，
+  或用 `--assign 名字=角色` 指定），旧文件清空。此后同一台机器上仍在运行旧版 vmware-policy 的 server 会拒绝所有请求，
+  所以要在同一次变更里一起升级。启用后 `token create` 必须带 `--role`。
+- **每次调用都检查：** 工具本身，以及它解析出的 target（没给时用默认 target 的真实名字）。会读所有 target 的工具，
+  除非角色对该 skill 的 targets 是 `"*"`，否则拒绝。会运行其他工具的工具（AIops 计划、批量操作、到期删除的 TTL），
+  只有角色放开了它能运行的每一个工具才允许。被拒的调用记为 `denied`、`rule=role:<角色>`；每条审计记录都带调用者的角色。
+- **绕开角色的工具**会给持有者超出角色的能力：凭据（`issue_*_kubeconfig`）、在虚机里执行代码、任意 API 路径（Aria
+  `get_api_path`）、设置了 `VMWARE_MCP_FILE_ROOT` 时读写服务器本机文件。`reader` 永远不含这些；自定义角色只有在
+  `allow_escape` 里逐个列名才拿得到。**持有绕开角色工具的角色，等同于这个账号本身。**
+- **`tools/list` 按调用者过滤**：每个 token 只看到它的角色能调用的工具。server instructions 里的 target 地址只给 `admin` 看。
+- 没有声明角色元数据的 skill（在新版 Policy 下运行的旧版 skill）只允许 `admin` 使用。
+- 网络模式的 server 里，没有已认证调用者的调用一律拒绝。
+- deny 规则可以按角色写：在 `rules.yaml` 里和 `clients:` 并列写 `roles: [reader]`。
+- vmware-pilot：`approve: none` 不能审批；`others` 不能审批自己的 token 创建的工作流。
+- token 和角色的变更（`token create/revoke/set-role`、`roles enable`）都会写入审计。
+- **角色只能区分只通过这个端点访问平台的人。** 持有账号凭据的人，或自己有 shell 并且网络能直达 vCenter 的 agent，
+  都不在角色的约束之内。某个团队绝对不能写，最可靠的做法仍是给它一个只读账号、单独一个端点。
+
 ## 会话池
 
 连接平台的 skill 可以为每个 target 维护一个小的会话池（`vmware_policy.pool.SessionPool`，`VMWARE_MCP_POOL_SIZE`，

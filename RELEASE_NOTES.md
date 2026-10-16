@@ -1,3 +1,30 @@
+## v1.24.0 — roles for network callers (HLD §18)
+
+Several people or agents can share one HTTPS endpoint with different jobs. Nothing changes until an operator runs
+`vmware-audit roles enable`.
+
+* **Roles.** Built-in `reader` (read tools, every skill and target) and `admin` (everything the server offers);
+  custom roles in `$OPS_HOME/roles.yaml` name, per skill, `tools: read | "*"`, `allow_write`, `allow_escape` and
+  `targets`, plus `approve: none | any | others` for vmware-pilot. Every key is required and "all" is `"*"`, so a
+  truncated file refuses a role instead of widening it; the file must be owner-only and owned by the server's user.
+  A role narrows what the server's account is used for; it never grants more than the account has.
+* **Tokens with roles** live in `<token file>.v2` (`name:sha256:role`): an older vmware-policy on the same host can
+  neither read nor rewrite them. `roles enable` moves every legacy token there (as `admin`, or `--assign NAME=ROLE`)
+  and empties the legacy file, so older servers refuse every request rather than run unchecked. After that,
+  `token create` needs `--role`. New: `token set-role`, `token list --long`, `roles enable | list | check`.
+* **Enforced on every call** in `@vmware_tool`, before deny rules: the tool, the target it resolves to (a tool that
+  reads every target needs targets `"*"`), and for a composite tool every tool it can run. Refusals are audited as
+  `denied` with `rule=role:<name>`; every audit row has a new `role` column. In a server on a network transport, a
+  call with no authenticated caller is refused.
+* **Escape tools** (credentials, guest code, raw API paths, host files while `VMWARE_MCP_FILE_ROOT` is set) need
+  `allow_escape`; `reader` never has them.
+* **Per caller:** `tools/list` shows only what the role may call; server instructions list target addresses to
+  `admin` only. A role change applies from the token's next request.
+* **Skills declare what policy cannot infer** (`vmware_policy.roles.declare_role_metadata`): escape tools, what
+  composite tools reach, how a missing target resolves. A skill that has not declared admits `admin` only.
+* Deny rules accept `roles:` next to `clients:`. Token and role changes are audit rows (surface `cli`).
+* `token list` still prints one name per line; `--long` adds role and file.
+
 ## v1.23.1 — tools may not touch this server's own control files (HLD §18 step 0)
 
 * **Security fix.** Tools that read or write a path on the server host (guest file download/upload, OVA and
