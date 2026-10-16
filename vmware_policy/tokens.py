@@ -26,6 +26,7 @@ import hmac
 import os
 import re
 import secrets
+import stat
 import threading
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -89,11 +90,36 @@ def _read(path: Path) -> dict[str, str]:
     return entries
 
 
+def _check_v2(path: Path) -> None:
+    """The v2 file names roles, so a planted line is an admin token (review MEDIUM-1).
+
+    Besides the mode: it must belong to the user running the server, and its directory
+    must not be writable by others (they could replace the file). Where the platform has
+    no POSIX owner/mode bits, the mode check reports and does not refuse, as for the
+    legacy file.
+    """
+    _check_mode(path)
+    if not hasattr(os, "geteuid"):
+        return
+    st = path.stat()
+    if st.st_uid != os.geteuid():
+        raise TokenError(
+            f"{path} is owned by uid {st.st_uid}, not by the user running this server; "
+            "it is not trusted. Recreate it as this user."
+        )
+    parent = path.parent.stat()
+    if parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not parent.st_mode & stat.S_ISVTX:
+        raise TokenError(
+            f"{path.parent} is writable by other users, who could replace {path.name}. "
+            f"Run: chmod go-w {path.parent}"
+        )
+
+
 def _read_v2(path: Path) -> dict[str, tuple[str, str]]:
     """v2 file: ``name -> (sha256, role)``."""
     if not path.exists():
         return {}
-    _check_mode(path)
+    _check_v2(path)
     entries: dict[str, tuple[str, str]] = {}
     for parts in _lines(path):
         if (
@@ -251,12 +277,24 @@ def enable_roles(
         _check_name(role, "role")
     path = path or token_file()
     with _exclusive(path):
+        was_enabled = v2_file(path).exists()
         legacy, v2 = _read(path), _read_v2(v2_file(path))
+        # Same name and secret in both: an earlier run stopped between writing v2 and
+        # emptying the legacy file. Finish it (review LOW-7).
+        legacy = {n: d for n, d in legacy.items() if not (n in v2 and v2[n][0] == d)}
         clash = sorted(set(legacy) & set(v2))
         if clash:
             raise TokenError(
                 f"Tokens {', '.join(clash)} exist in both {path} and {v2_file(path)}; "
                 "revoke one copy first."
+            )
+        if was_enabled and legacy:
+            # Written after opt-in by an older vmware-audit; new servers refuse them, and
+            # moving them silently would make them admin.
+            raise TokenError(
+                f"{path} has tokens written after roles were enabled (by an older "
+                f"vmware-audit?): {', '.join(sorted(legacy))}. Revoke them and create them "
+                "again with --role."
             )
         unknown = sorted(set(assign) - set(legacy))
         if unknown:
@@ -321,14 +359,16 @@ class TokenStore:
         return self._v2
 
     @staticmethod
-    def _stat(path: Path) -> tuple[int, int, int] | None:
+    def _stat(path: Path) -> tuple[int, ...] | None:
         try:
             st = path.stat()
         except FileNotFoundError:
             return None
         # os.replace gives a new inode, so a same-size rewrite within one
         # mtime tick (coarse filesystems, scripted rotation) is still seen.
-        return (st.st_ino, st.st_mtime_ns, st.st_size)
+        # Mode and owner too: a chmod/chown changes neither of the others, and the
+        # permission checks run only on a re-read (review LOW-1).
+        return (st.st_ino, st.st_mtime_ns, st.st_size, st.st_mode, st.st_uid)
 
     def _current(self) -> dict[str, tuple[str, str]]:
         stamp = (self._stat(self._path), self._stat(self._v2))

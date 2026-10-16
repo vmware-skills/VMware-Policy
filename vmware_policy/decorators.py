@@ -210,6 +210,7 @@ def vmware_tool(
                 # signal must not survive into the next call on this task.
                 token = _failure_signal.set(None)
                 try:
+                    _role_check(state)
                     _check_common_arguments(state.raw_params)
                     _pre_check(state)
                     return _annotate_result(state, await func(*args, **kwargs))
@@ -259,6 +260,7 @@ def vmware_tool(
                 # signal must not survive into the next call on this task.
                 token = _failure_signal.set(None)
                 try:
+                    _role_check(state)
                     _check_common_arguments(state.raw_params)
                     _pre_check(state)
                     return _annotate_result(state, func(*args, **kwargs))
@@ -465,6 +467,34 @@ def _check_common_arguments(params: dict[str, Any], *, cli: bool = False) -> Non
         )
 
 
+def _role_check(state: _CallState) -> None:
+    """Roles first (HLD §18 D-21(1)): which tools and targets this caller's token may use.
+
+    Before the argument checks, so every refusal row carries the caller's role and a
+    role without the tool learns nothing from a tool's argument rules (review M2).
+    A refusal also counts toward the per-caller budget, so probing tools or targets
+    trips the runaway guard like any other burst (D-25). None when roles do not
+    apply (stdio, CLI).
+    """
+    from vmware_policy import roles
+
+    decision = roles.check_call(state.skill, state.tool_name, state.raw_params)
+    if decision is None:
+        return
+    state.role = decision.role
+    if decision.allowed:
+        return
+    state.status = "denied"
+    state.result = {"error": decision.reason, "rule": decision.rule}
+    try:
+        get_budget().check_and_record(state.tool_name, state.raw_params)
+    except BudgetExceeded as exc:
+        state.status = "budget_exceeded"
+        state.result = {"error": exc.reason, "rule": exc.rule}
+        raise
+    raise PolicyDenied(PolicyResult(False, decision.rule, decision.reason))
+
+
 def _pre_check(state: _CallState) -> None:
     """Policy pre-check + L5 auto-remediation pattern consult.
 
@@ -472,18 +502,6 @@ def _pre_check(state: _CallState) -> None:
     never block the call (fail-open by design — a broken pattern file must
     not take down every MCP tool).
     """
-    # Roles first (HLD §18 D-21): on a network server, which tools and targets this
-    # caller's token may use. None when roles do not apply (stdio, CLI).
-    from vmware_policy import roles
-
-    decision = roles.check_call(state.skill, state.tool_name, state.raw_params)
-    if decision is not None:
-        state.role = decision.role
-        if not decision.allowed:
-            state.status = "denied"
-            state.result = {"error": decision.reason, "rule": decision.rule}
-            raise PolicyDenied(PolicyResult(False, decision.rule, decision.reason))
-
     # Authorize through the shared guard so the CLI and MCP surfaces apply the
     # exact same policy (HLD §4, I-3). guard() is a no-op unless the operator
     # wrote deny / maintenance rules. Approval tiers were removed in v1.8.7:

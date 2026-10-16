@@ -20,6 +20,7 @@ Pieces:
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import os
 import re
 import threading
@@ -180,10 +181,11 @@ def check_owned_private(path: Path) -> str | None:
 class RoleFile:
     """``roles.yaml``, re-read when it changes; a broken file refuses every custom role."""
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(self, path: Path | None = None, *, audit_reloads: bool = False) -> None:
         self._path = path or roles_file()
         self._lock = threading.Lock()
-        self._stamp: tuple[int, int, int] | None = None
+        self._audit_reloads = audit_reloads  # servers only; the CLI reads it on every command
+        self._stamp: tuple[int, ...] | None = None
         self._roles: dict[str, Role] = {}
         self._problems: dict[str, str] = {}
         self._broken: str | None = None
@@ -195,26 +197,61 @@ class RoleFile:
     def exists(self) -> bool:
         return self._path.exists()
 
-    def _refresh(self) -> None:
+    def _stat(self) -> tuple[int, ...] | None:
         try:
             st = self._path.stat()
-            stamp: tuple[int, int, int] | None = (st.st_ino, st.st_mtime_ns, st.st_size)
         except FileNotFoundError:
-            stamp = None
+            return None
+        # Mode and owner too: a chmod/chown changes nothing else, and the ownership
+        # check runs only on a re-read (review LOW-1).
+        return (st.st_ino, st.st_mtime_ns, st.st_size, st.st_mode, st.st_uid)
+
+    def _refresh(self) -> None:
+        stamp = self._stat()
         if stamp == self._stamp and stamp is not None:
             return
         roles: dict[str, Role] = {}
         problems: dict[str, str] = {}
         broken: str | None = None
+        text = ""
         if stamp is not None:
             broken = check_owned_private(self._path)
             if broken is None:
                 try:
-                    roles, problems = parse_roles(self._path.read_text(encoding="utf-8"))
+                    text = self._path.read_text(encoding="utf-8")
+                    if self._stat() != stamp:
+                        # Edited in place while we read: a cut-short glob could widen a
+                        # role. Refuse custom roles this call; the next one re-reads (LOW-2).
+                        broken = f"{self._path} changed while it was being read"
+                        stamp = (*stamp[:-1], -1)  # never equal to a real stamp
+                    else:
+                        roles, problems = parse_roles(text)
                 except (RoleError, OSError) as exc:
                     broken = str(exc)
         # Replace the whole set at once: a reader never sees half a file.
         self._roles, self._problems, self._broken, self._stamp = roles, problems, broken, stamp
+        if self._audit_reloads:
+            self._audit_reload(text, roles, problems, broken)
+
+    def _audit_reload(
+        self, text: str, roles: dict[str, Role], problems: dict[str, str], broken: str | None
+    ) -> None:
+        """What the server now enforces, as an audit row (HLD §18 D-25, review MEDIUM-4)."""
+        from vmware_policy.guard import audit_call
+
+        params = {
+            "path": str(self._path),
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest() if text else "",
+            "roles": sorted(roles),
+            "refused_roles": sorted(problems),
+        }
+        audit_call(
+            "policy",
+            "roles_reload",
+            params=params,
+            status="error" if broken else "ok",
+            result={"error": broken} if broken else {"ok": True},
+        )
 
     def get(self, name: str) -> tuple[Role | None, str]:
         """``(role, "")`` or ``(None, why it cannot be used)``."""
@@ -391,13 +428,25 @@ def _granted(grant: SkillGrant, meta: SkillMeta, skill: str, tool: str) -> str |
     return f"{tool} changes the platform and is not in allow_write"
 
 
+def _reader_refuses(meta: SkillMeta, tool: str) -> str | None:
+    if tool in meta.all_escapes():
+        return f"{tool} gives its holder more than read access"
+    return None if meta.registry.get(tool) is True else f"{tool} changes the platform"
+
+
 def _tool_allowed(role: Role, meta: SkillMeta, skill: str, tool: str) -> str | None:
     if role is ADMIN:
         return None
     if role is READER:
-        if tool in meta.all_escapes():
-            return f"{tool} gives its holder more than read access"
-        return None if meta.registry.get(tool) is True else f"{tool} changes the platform"
+        why = _reader_refuses(meta, tool)
+        if why:
+            return why
+        # A read-only composite is held to what it reaches, as for custom roles (LOW-4).
+        for reached in sorted(meta.reaches.get(tool, ())):
+            why = _reader_refuses(meta, reached)
+            if why:
+                return f"{tool} can run {reached}: {why}"
+        return None
     grant = (role.skills or {}).get(skill)
     if grant is None:
         return f"the role does not include skill {skill!r}"
@@ -486,7 +535,7 @@ def bind(store: Any, role_file: RoleFile | None = None) -> None:
     """Called by ``serve.configure`` for a network transport."""
     global _STORE, _ROLE_FILE
     _STORE = store
-    _ROLE_FILE = role_file or RoleFile()
+    _ROLE_FILE = role_file or RoleFile(audit_reloads=True)
 
 
 def unbind() -> None:
@@ -575,7 +624,12 @@ def filter_tools(skill: str, tools: list[Any]) -> list[Any]:
     return [t for t in tools if visible(role, skill, getattr(t, "name", ""))]
 
 
-_TARGETS_SENTENCE = re.compile(r"Configured targets: .*?\.(?=\s|$)", re.S)
+_TARGETS_START = "Configured targets:"
+#: What every skill writes right after the target list. Cutting up to it, not to the
+#: first period, keeps a target named ``prod.`` from leaving the rest of the list
+#: showing (review LOW-3); without it the rest of the text goes, which hides too
+#: much rather than too little.
+_TARGETS_END = " Choosing a target:"
 _TARGETS_HIDDEN = (
     "Configured targets: not listed for this role (each result names the target that "
     "answered; ask an operator which targets your role may use)."
@@ -593,4 +647,13 @@ def instructions_for_caller(text: str | None) -> str | None:
     role, _name, _why = caller_role()
     if role is ADMIN:
         return text
-    return _TARGETS_SENTENCE.sub(_TARGETS_HIDDEN, text)
+    return _hide_targets(text)
+
+
+def _hide_targets(text: str) -> str:
+    start = text.find(_TARGETS_START)
+    if start < 0:
+        return text
+    end = text.find(_TARGETS_END, start)
+    rest = text[end:] if end >= 0 else ""
+    return text[:start] + _TARGETS_HIDDEN + rest

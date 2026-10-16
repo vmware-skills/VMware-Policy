@@ -187,7 +187,22 @@ def configure(server: Any, opts: ServeOptions) -> str:
 
     # Tools that read or write host paths may not touch these (HLD §18 step 0),
     # wherever the operator keeps them.
-    for path in (store.path, opts.certfile, opts.keyfile):
+    # The role-token file, its lock and temp file, and roles.yaml too: with
+    # --token-file inside the file root, F.v2 is not "inside" F (review MEDIUM-2).
+    from vmware_policy.roles import roles_file
+
+    v2 = store.v2_path
+    protected = (
+        store.path,
+        store.path.with_name(store.path.name + ".lock"),
+        store.path.with_name(store.path.name + ".tmp"),
+        v2,
+        v2.with_name(v2.name + ".tmp"),
+        roles_file(),
+        opts.certfile,
+        opts.keyfile,
+    )
+    for path in protected:
         if path is not None:
             register_protected(path)
 
@@ -224,6 +239,14 @@ def _bind_roles(server: Any, opts: ServeOptions, store: TokenStore) -> None:
     from vmware_policy import roles
 
     roles.bind(store)
+    meta = roles.metadata(opts.skill)
+    if store.roles_enabled() and (meta is None or not meta.registry):
+        # Without the registry, host-path tools would not count as escapes and every
+        # tool would look like a write (review LOW-9). run_server records it first.
+        raise ServeError(
+            "Roles are enabled but this server's tool registry could not be read; "
+            "refusing to serve rather than guess which tools each role may use."
+        )
     low = getattr(server, "_mcp_server", None)
     if low is None or not hasattr(low, "list_tools") or not hasattr(server, "list_tools"):
         if store.roles_enabled():
@@ -343,6 +366,9 @@ def _record_registry(server: Any, skill: str) -> None:
         return
     from vmware_policy.hostpaths import HOST_PATH_PARAMS
 
+    declared = roles.metadata(skill)
+    target_arg = declared.target_param if declared else "target"
+
     def props(t: Any) -> set[str]:
         schema = getattr(t, "inputSchema", None) or {}
         return set((schema.get("properties") or {}) if isinstance(schema, dict) else {})
@@ -353,7 +379,8 @@ def _record_registry(server: Any, skill: str) -> None:
             t.name: getattr(getattr(t, "annotations", None), "readOnlyHint", None) is True
             for t in tools
         },
-        target_params={t.name for t in tools if {"target", "controller"} & props(t)},
+        # The argument this skill resolves, not either name (review LOW-10).
+        target_params={t.name for t in tools if target_arg in props(t)},
         host_path_tools={t.name for t in tools if props(t) & HOST_PATH_PARAMS},
     )
 
