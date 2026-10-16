@@ -14,6 +14,10 @@
   unset, every host path is refused. stdio and the CLI keep the control-file protection only.
 * Names are compared ignoring case (the default macOS filesystem would otherwise let `~/.VMWARE` through) and by file
   identity; `/dev` and `/proc` paths are always refused.
+* `VMWARE_MCP_FILE_ROOT` must be an absolute path that is neither `/` nor the home directory or one of its parents —
+  the server refuses to start otherwise — and it is matched by exact name plus file identity. The network rule is
+  process-wide once a server is configured for a network transport, so a thread a tool starts cannot fall back to
+  the stdio rule.
 * Keep `OPS_HOME` a dedicated directory: everything inside it is off limits to these tools.
 
 ## v1.23.0 — load-balancer health check, request correlation, role-less accounts
