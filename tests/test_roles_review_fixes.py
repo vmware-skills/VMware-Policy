@@ -228,3 +228,61 @@ def test_a_refusal_raised_inside_a_tool_is_audited_with_its_rule(ops_home):  # n
         _tool(approve_thing)()
     row = next(r for r in _rows(ops_home) if r["tool"] == "approve_thing")
     assert row["status"] == "denied" and "role:ops" in row["result"]
+
+
+# ── narrow review of the fixes ────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_a_missing_roles_file_is_one_reload_row_not_one_per_call(ops_home):  # noqa: F811
+    """Review M-1: a deleted roles.yaml wrote an 'ok' row on every custom-role call."""
+    rf = roles.RoleFile(audit_reloads=True)
+    for _ in range(5):
+        rf.get("ops")
+    reloads = [r for r in _rows(ops_home) if r["tool"] == "roles_reload"]
+    assert [r["status"] for r in reloads] == ["error"]
+
+
+@pytest.mark.unit
+def test_enable_refuses_up_front_in_a_directory_others_can_write(tmp_path):
+    """Review L-1: opting in succeeded, then every server refused to start."""
+    d = tmp_path / "ops"
+    d.mkdir()
+    f = d / "mcp-tokens"
+    tokens.create_token("alice", f)
+    os.chmod(d, 0o775)
+    try:
+        with pytest.raises(TokenError, match="writable by other users"):
+            tokens.enable_roles(f)
+        assert not tokens.roles_enabled(f) and "alice" in tokens._read(f)
+    finally:
+        os.chmod(d, 0o700)
+
+
+@pytest.mark.unit
+def test_a_later_chmod_of_the_directory_is_seen(tmp_path):
+    d = tmp_path / "ops"
+    d.mkdir()
+    f = d / "mcp-tokens"
+    tokens.enable_roles(f)
+    tokens.create_token("bob", f, role="reader")
+    store = TokenStore(f)
+    assert store.count() == 1
+    os.chmod(d, 0o770)
+    try:
+        with pytest.raises(TokenError, match="writable by other users"):
+            store.count()
+    finally:
+        os.chmod(d, 0o700)
+
+
+@pytest.mark.unit
+def test_rerunning_an_interrupted_enable_with_the_same_assign_works(tmp_path):
+    """Review L-2: the re-run said 'No legacy token named alice'."""
+    f = tmp_path / "mcp-tokens"
+    tokens.create_token("alice", f)
+    digest = tokens._read(f)["alice"]
+    tokens._write_v2(tokens.v2_file(f), {"alice": (digest, "admin")})  # stopped mid-way
+    tokens.enable_roles(f, {"alice": "reader"})
+    assert tokens._read(f) == {}
+    assert TokenStore(f).role_of("alice") == "reader"

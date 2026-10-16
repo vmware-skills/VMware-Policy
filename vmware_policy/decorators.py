@@ -480,9 +480,10 @@ def _role_check(state: _CallState) -> None:
 
     Before the argument checks, so every refusal row carries the caller's role and a
     role without the tool learns nothing from a tool's argument rules (review M2).
-    A refusal also counts toward the per-caller budget, so probing tools or targets
-    trips the runaway guard like any other burst (D-25). None when roles do not
-    apply (stdio, CLI).
+    A refusal is also recorded in the per-caller budget, so repeating the same refused
+    call trips the runaway guard (D-25). Probing different tools or targets does not:
+    on a network server only the identical-call guard applies (review L-3). None when
+    roles do not apply (stdio, CLI).
     """
     from vmware_policy import roles
 

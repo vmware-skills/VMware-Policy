@@ -107,6 +107,13 @@ def _check_v2(path: Path) -> None:
             f"{path} is owned by uid {st.st_uid}, not by the user running this server; "
             "it is not trusted. Recreate it as this user."
         )
+    _check_parent(path)
+
+
+def _check_parent(path: Path) -> None:
+    """Others who can write the directory could replace ``path`` with their own file."""
+    if not hasattr(os, "geteuid") or not path.parent.exists():
+        return
     parent = path.parent.stat()
     if parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not parent.st_mode & stat.S_ISVTX:
         raise TokenError(
@@ -277,11 +284,17 @@ def enable_roles(
         _check_name(role, "role")
     path = path or token_file()
     with _exclusive(path):
+        # Before anything is written: servers will refuse a v2 file in a directory
+        # others can write, so say so now rather than after opting in (review L-1).
+        _check_parent(v2_file(path))
         was_enabled = v2_file(path).exists()
         legacy, v2 = _read(path), _read_v2(v2_file(path))
         # Same name and secret in both: an earlier run stopped between writing v2 and
-        # emptying the legacy file. Finish it (review LOW-7).
-        legacy = {n: d for n, d in legacy.items() if not (n in v2 and v2[n][0] == d)}
+        # emptying the legacy file. Finish it (review LOW-7); a role assigned again on
+        # the re-run applies to those too (review L-2).
+        finished = {n for n, d in legacy.items() if n in v2 and v2[n][0] == d}
+        legacy = {n: d for n, d in legacy.items() if n not in finished}
+        v2 = {n: (e[0], assign[n]) if n in finished and n in assign else e for n, e in v2.items()}
         clash = sorted(set(legacy) & set(v2))
         if clash:
             raise TokenError(
@@ -296,7 +309,7 @@ def enable_roles(
                 f"vmware-audit?): {', '.join(sorted(legacy))}. Revoke them and create them "
                 "again with --role."
             )
-        unknown = sorted(set(assign) - set(legacy))
+        unknown = sorted(set(assign) - set(legacy) - finished)
         if unknown:
             raise TokenError(f"No legacy token named {', '.join(unknown)} to assign a role to.")
         moved = {name: assign.get(name, "admin") for name in legacy}
@@ -347,7 +360,7 @@ class TokenStore:
         self._path = path or token_file()
         self._v2 = v2_file(self._path)
         self._lock = threading.Lock()
-        self._stamp: tuple[object, object] | None = None
+        self._stamp: tuple[object, ...] | None = None
         self._entries: dict[str, tuple[str, str]] = {}
 
     @property
@@ -370,8 +383,18 @@ class TokenStore:
         # permission checks run only on a re-read (review LOW-1).
         return (st.st_ino, st.st_mtime_ns, st.st_size, st.st_mode, st.st_uid)
 
+    @staticmethod
+    def _dir_mode(path: Path) -> tuple[int, int] | None:
+        """Mode and owner only: the directory's mtime moves whenever any file in it does."""
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_mode, st.st_uid)
+
     def _current(self) -> dict[str, tuple[str, str]]:
-        stamp = (self._stat(self._path), self._stat(self._v2))
+        # The directory's mode too: a later chmod g+w on it is re-checked (review L-1).
+        stamp = (self._stat(self._path), self._stat(self._v2), self._dir_mode(self._v2.parent))
         with self._lock:
             if stamp != self._stamp or stamp == (None, None):
                 legacy = _read(self._path) if stamp[0] is not None else {}

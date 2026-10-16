@@ -187,6 +187,7 @@ class RoleFile:
         self._path = path or roles_file()
         self._lock = threading.Lock()
         self._audit_reloads = audit_reloads  # servers only; the CLI reads it on every command
+        self._loaded = False
         self._stamp: tuple[int, ...] | None = None
         self._roles: dict[str, Role] = {}
         self._problems: dict[str, str] = {}
@@ -210,8 +211,9 @@ class RoleFile:
 
     def _refresh(self) -> None:
         stamp = self._stat()
-        if stamp == self._stamp and stamp is not None:
-            return
+        if stamp == self._stamp and (stamp is not None or self._loaded):
+            return  # unchanged; a missing file is one reload row, not one per call (M-1)
+        self._loaded = True
         roles: dict[str, Role] = {}
         problems: dict[str, str] = {}
         broken: str | None = None
@@ -233,7 +235,8 @@ class RoleFile:
         # Replace the whole set at once: a reader never sees half a file.
         self._roles, self._problems, self._broken, self._stamp = roles, problems, broken, stamp
         if self._audit_reloads:
-            self._audit_reload(text, roles, problems, broken)
+            missing = f"{self._path} does not exist" if stamp is None else None
+            self._audit_reload(text, roles, problems, broken or missing)
 
     def _audit_reload(
         self, text: str, roles: dict[str, Role], problems: dict[str, str], broken: str | None
