@@ -334,6 +334,7 @@ class _CallState:
         "sensitive_result",
         "raw_params",
         "previewed",
+        "role",
     )
 
     def __init__(
@@ -362,6 +363,8 @@ class _CallState:
         self.pattern_match: PatternMatch | None = None
         self.risk_level = risk_level
         self.timeout_seconds = timeout_seconds
+        # The caller's role at call time (HLD §18 D-22); '' when roles do not apply.
+        self.role = ""
 
         # Map positional args to parameter names so they appear in the audit
         # log and participate in env scoping (previously only kwargs did).
@@ -469,6 +472,18 @@ def _pre_check(state: _CallState) -> None:
     never block the call (fail-open by design — a broken pattern file must
     not take down every MCP tool).
     """
+    # Roles first (HLD §18 D-21): on a network server, which tools and targets this
+    # caller's token may use. None when roles do not apply (stdio, CLI).
+    from vmware_policy import roles
+
+    decision = roles.check_call(state.skill, state.tool_name, state.raw_params)
+    if decision is not None:
+        state.role = decision.role
+        if not decision.allowed:
+            state.status = "denied"
+            state.result = {"error": decision.reason, "rule": decision.rule}
+            raise PolicyDenied(PolicyResult(False, decision.rule, decision.reason))
+
     # Authorize through the shared guard so the CLI and MCP surfaces apply the
     # exact same policy (HLD §4, I-3). guard() is a no-op unless the operator
     # wrote deny / maintenance rules. Approval tiers were removed in v1.8.7:
@@ -697,6 +712,7 @@ def _finalize(state: _CallState) -> None:
         risk_level=state.risk_level,
         rationale=state.rationale,
         approved_by=state.approved_by,
+        role=state.role,
     )
 
 

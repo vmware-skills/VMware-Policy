@@ -473,6 +473,20 @@ class PolicyEngine:
             if name is None or not any(self._pattern_match(c, name) for c in clients):
                 return False
 
+        # Match by the caller's role (HLD §18 L6): `roles: [reader, "ops-*"]`. Like
+        # `clients:`, a call with no role (stdio, CLI, roles not enabled) is not matched.
+        rule_roles = rule.get("roles", [])
+        if isinstance(rule_roles, str):
+            rule_roles = [rule_roles]
+        elif rule_roles and not isinstance(rule_roles, list):
+            return True  # unreadable value: keep the rule, never silently drop it
+        if rule_roles:
+            from vmware_policy import roles as roles_mod
+
+            role_name = roles_mod.caller_role()[1] if roles_mod.roles_enabled() else ""
+            if not role_name or not any(self._pattern_match(r, role_name) for r in rule_roles):
+                return False
+
         # Match by risk level (minimum)
         min_risk = rule.get("min_risk_level")
         if min_risk:

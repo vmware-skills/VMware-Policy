@@ -206,10 +206,43 @@ def configure(server: Any, opts: ServeOptions) -> str:
     # The SDK takes the verifier only in its constructor; our servers are built
     # at import time, so it is set here, before streamable_http_app() reads it.
     server._token_verifier = FileTokenVerifier(store)
+    _bind_roles(server, opts, store)
     offload_sync_tools(server, pooled=opts.pooled)
     _add_healthz(server)
     set_process_surface(surface)
     return surface
+
+
+def _bind_roles(server: Any, opts: ServeOptions, store: TokenStore) -> None:
+    """Roles for network callers (HLD §18): bind the token store, filter ``tools/list``.
+
+    The list filter goes through the SDK's low-level server, a private attribute. If it
+    is missing, a deployment that opted in to roles refuses to start rather than offer
+    every tool; one that did not logs a warning and serves (R2-Md) — calls are checked
+    in ``@vmware_tool`` either way.
+    """
+    from vmware_policy import roles
+
+    roles.bind(store)
+    low = getattr(server, "_mcp_server", None)
+    if low is None or not hasattr(low, "list_tools") or not hasattr(server, "list_tools"):
+        if store.roles_enabled():
+            raise ServeError(
+                "Roles are enabled but this MCP SDK version cannot filter tools/list per caller; "
+                "refusing to offer every tool to every role. Install mcp>=1.28,<2.0."
+            )
+        print(
+            "warning: this MCP SDK cannot filter tools/list per caller; roles would be "
+            "enforced per call only.",
+            file=sys.stderr,
+        )
+        return
+    original = server.list_tools
+
+    async def list_tools_for_caller() -> list[Any]:
+        return roles.filter_tools(opts.skill, list(await original()))
+
+    low.list_tools()(list_tools_for_caller)
 
 
 def assert_auth_enforced(app: Any, path: str, opts: ServeOptions) -> None:
@@ -279,6 +312,29 @@ def run(server: Any, opts: ServeOptions) -> None:
     uvicorn.run(app, **config)
 
 
+def _record_registry(server: Any, skill: str) -> None:
+    """Every tool of ``server`` and whether its readOnlyHint is exactly True (HLD §18)."""
+    import asyncio
+
+    from vmware_policy import roles
+
+    try:
+        tools = asyncio.run(server.list_tools())
+    except Exception as exc:  # noqa: BLE001 — an empty registry fails closed for roles
+        print(
+            f"warning: could not read the tool registry for roles ({type(exc).__name__})",
+            file=sys.stderr,
+        )
+        return
+    roles.register_registry(
+        skill,
+        {
+            t.name: getattr(getattr(t, "annotations", None), "readOnlyHint", None) is True
+            for t in tools
+        },
+    )
+
+
 def run_server(
     server: Any,
     *,
@@ -304,6 +360,9 @@ def run_server(
     """
     from vmware_policy.exposure import apply_or_exit
 
+    # Roles validate names against the full registry, hidden tools included (R2-Ma),
+    # so it is recorded before exposure removes anything.
+    _record_registry(server, skill)
     apply_or_exit(server, skill=skill, expose=expose, allow_write=allow_write)
     names = tuple(n.strip() for n in (public_name or "").split(",") if n.strip())
     opts = ServeOptions(

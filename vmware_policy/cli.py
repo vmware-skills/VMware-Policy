@@ -324,26 +324,66 @@ token_app = typer.Typer(
 app.add_typer(token_app, name="token")
 
 
+def _token_path(opt: str | None):
+    from pathlib import Path
+
+    from vmware_policy.tokens import token_file
+
+    return Path(opt).expanduser() if opt else token_file()
+
+
+def _audit_privilege(tool: str, params: dict, status: str = "ok", error: str = "") -> None:
+    """Privilege changes are audit rows too (HLD §18 D-25), surface ``cli``."""
+    from vmware_policy.guard import audit_call
+
+    audit_call(
+        "policy", tool, params=params, status=status,
+        result={"error": error} if error else {"ok": True}, surface="cli",
+    )
+
+
+def _known_role(role: str) -> None:
+    """A token may only get a role that exists: built in, or defined in roles.yaml."""
+    from vmware_policy.roles import BUILTIN, RoleFile
+
+    if role in BUILTIN:
+        return
+    found, why = RoleFile().get(role)
+    if found is None:
+        typer.echo(f"Error: {why}. Built-in roles: {', '.join(BUILTIN)}.", err=True)
+        raise typer.Exit(2)
+
+
 @token_app.command("create")
 @cli_local("writes a token hash to the local token file")
 def token_create(
     name: str,
+    role: str = typer.Option(
+        None,
+        "--role",
+        help="reader, admin or a role in roles.yaml (HLD §18). Required once roles are enabled.",
+    ),
     token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
 ) -> None:
     """Create a token NAME; the secret is printed once and never stored."""
-    from pathlib import Path
+    from vmware_policy.tokens import TokenError, create_token, v2_file
 
-    from vmware_policy.tokens import TokenError, create_token, token_file
-
-    path = Path(token_file_opt).expanduser() if token_file_opt else token_file()
+    path = _token_path(token_file_opt)
+    if role is not None:
+        _known_role(role)
     try:
-        secret = create_token(name, path)
+        secret = create_token(name, path, role=role)
     except TokenError as exc:
+        _audit_privilege("token_create", {"name": name, "role": role}, "error", str(exc))
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
+    _audit_privilege("token_create", {"name": name, "role": role or "admin (no roles)"})
     typer.echo(secret)
+    where = v2_file(path) if role is not None else path
+    role_note = f" with role '{role}'" if role is not None else ""
     typer.echo(
-        f"Token '{name}' created in {path}. Copy it now: it is not stored and cannot be "
+        f"Token '{name}'{role_note} created in {where}. Copy it now: it is not stored "
+        "and cannot be "
         f"shown again. Clients send it as 'Authorization: Bearer <token>'; audit rows record "
         f"'token:{name}'.",
         err=True,
@@ -353,21 +393,27 @@ def token_create(
 @token_app.command("list")
 @cli_local("reads token names from the local token file")
 def token_list(
+    long: bool = typer.Option(
+        False, "--long", "-l", help="Also show each token's role, file and state."
+    ),
     token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
 ) -> None:
-    """List token names (secrets are not stored)."""
-    from pathlib import Path
-
-    from vmware_policy.tokens import TokenError, list_tokens
+    """List token names (secrets are not stored); --long adds role and file."""
+    from vmware_policy.tokens import TokenError, list_token_info
 
     try:
-        names = list_tokens(Path(token_file_opt).expanduser() if token_file_opt else None)
+        infos = list_token_info(_token_path(token_file_opt))
     except TokenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
-    for name in names:
-        typer.echo(name)
-    if not names:
+    for t in infos:
+        if not long:
+            typer.echo(t.name)
+            continue
+        state = "" if t.usable else "  REFUSED"
+        note = f"  ({t.note})" if t.note else ""
+        typer.echo(f"{t.name}\t{t.role}\t{t.file}{state}{note}")
+    if not infos:
         typer.echo("No tokens. Create one with 'vmware-audit token create NAME'.", err=True)
 
 
@@ -378,16 +424,133 @@ def token_revoke(
     token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
 ) -> None:
     """Revoke token NAME; running servers refuse it from their next request."""
-    from pathlib import Path
-
     from vmware_policy.tokens import TokenError, revoke_token
 
     try:
-        revoke_token(name, Path(token_file_opt).expanduser() if token_file_opt else None)
+        revoke_token(name, _token_path(token_file_opt))
+    except TokenError as exc:
+        _audit_privilege("token_revoke", {"name": name}, "error", str(exc))
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    _audit_privilege("token_revoke", {"name": name})
+    typer.echo(f"Token '{name}' revoked.", err=True)
+
+
+@token_app.command("set-role")
+@cli_local("changes a token's role in the local token file")
+def token_set_role(
+    name: str,
+    role: str,
+    token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
+) -> None:
+    """Give role token NAME the role ROLE; applies from its next request."""
+    from vmware_policy.tokens import TokenError, set_role
+
+    _known_role(role)
+    try:
+        old = set_role(name, role, _token_path(token_file_opt))
+    except TokenError as exc:
+        _audit_privilege("token_set_role", {"name": name, "role": role}, "error", str(exc))
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    _audit_privilege("token_set_role", {"name": name, "old_role": old, "role": role})
+    typer.echo(f"Token '{name}': role {old} -> {role}.", err=True)
+
+
+roles_app = typer.Typer(
+    help="Roles for network callers (HLD §18): which tools and targets each token may use.",
+    no_args_is_help=True,
+)
+app.add_typer(roles_app, name="roles")
+
+
+@roles_app.command("enable")
+@cli_local("moves legacy tokens into the role-token file")
+def roles_enable(
+    assign: list[str] = typer.Option(
+        [], "--assign", help="NAME=ROLE for a legacy token (repeatable). Others become admin."
+    ),
+    token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
+) -> None:
+    """Turn roles on: every legacy token moves to the role file (admin unless --assign).
+
+    Older vmware-policy servers on this host then refuse every request, because the
+    legacy file is left with no tokens — upgrade them or run them with new tokens.
+    """
+    from vmware_policy.tokens import TokenError, enable_roles, v2_file
+
+    pairs: dict[str, str] = {}
+    for item in assign:
+        name, sep, role = item.partition("=")
+        if not sep or not name or not role:
+            typer.echo(f"Error: --assign takes NAME=ROLE, got {item!r}.", err=True)
+            raise typer.Exit(2)
+        _known_role(role)
+        pairs[name] = role
+    path = _token_path(token_file_opt)
+    try:
+        moved = enable_roles(path, pairs)
+    except TokenError as exc:
+        _audit_privilege("roles_enable", {"assign": pairs}, "error", str(exc))
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    _audit_privilege("roles_enable", {"moved": moved})
+    for name, role in sorted(moved.items()):
+        typer.echo(f"{name}\t{role}")
+    typer.echo(
+        f"Roles enabled: {len(moved)} token(s) moved to {v2_file(path)}. Servers running an older "
+        "vmware-policy on this host now refuse every request until they are upgraded.",
+        err=True,
+    )
+
+
+@roles_app.command("list")
+@cli_local("reads roles.yaml")
+def roles_list() -> None:
+    """Defined roles, plus any that cannot be used and why."""
+    from vmware_policy.roles import BUILTIN, RoleFile
+
+    store = RoleFile()
+    for name in BUILTIN:
+        typer.echo(f"{name}\tbuilt in")
+    for name in store.names():
+        typer.echo(f"{name}\t{store.path}")
+    for name, why in sorted(store.problems().items()):
+        typer.echo(f"{name}\tUNUSABLE: {why}")
+
+
+@roles_app.command("check")
+@cli_local("reads roles.yaml and the token files")
+def roles_check(
+    token_file_opt: str = typer.Option(None, "--token-file", help="Default $OPS_HOME/mcp-tokens."),
+) -> None:
+    """Exit 1 when a role is unusable or a token is refused; prints why."""
+    from vmware_policy.roles import RoleFile
+    from vmware_policy.tokens import TokenError, list_token_info
+
+    bad = 0
+    store = RoleFile()
+    for name, why in sorted(store.problems().items()):
+        typer.echo(f"role {name}: {why}")
+        bad += 1
+    try:
+        infos = list_token_info(_token_path(token_file_opt))
     except TokenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(2) from exc
-    typer.echo(f"Token '{name}' revoked.", err=True)
+    for t in infos:
+        if not t.usable:
+            typer.echo(f"token {t.name}: refused ({t.note or 'duplicate name'})")
+            bad += 1
+            continue
+        role, why = store.get(t.role)
+        if role is None:
+            typer.echo(f"token {t.name}: role {t.role!r} unusable: {why}")
+            bad += 1
+    if bad:
+        raise typer.Exit(1)
+    typer.echo("All roles and tokens are usable.", err=True)
+
 
 if __name__ == "__main__":
     app()

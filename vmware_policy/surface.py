@@ -33,6 +33,11 @@ def set_process_surface(value: str) -> None:
     _process_surface = validate(value)
 
 
+def process_surface() -> str:
+    """The surface ``serve()`` set for this process, ignoring per-call overrides."""
+    return _process_surface
+
+
 def current_surface() -> str:
     """The surface for a call that did not name one."""
     return _override.get() or _process_surface

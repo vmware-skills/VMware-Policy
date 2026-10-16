@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     approved_by TEXT    NOT NULL DEFAULT '',
     risk_tier   TEXT    NOT NULL DEFAULT '',
     surface     TEXT    NOT NULL DEFAULT '',
-    correlation_id TEXT NOT NULL DEFAULT ''
+    correlation_id TEXT NOT NULL DEFAULT '',
+    role        TEXT    NOT NULL DEFAULT ''
 )
 """
 
@@ -67,11 +68,14 @@ _MIGRATIONS = (
     # The calling platform's trace id (traceparent / X-Request-ID), so its
     # traces can be joined to these rows. '' for stdio, CLI and older rows.
     ("correlation_id", "TEXT NOT NULL DEFAULT ''"),
+    # HLD §18 D-22: the caller's role at call time. '' where roles do not apply
+    # (stdio, CLI, before opt-in) and on older rows.
+    ("role", "TEXT NOT NULL DEFAULT ''"),
 )
 
 _INSERT = """\
-INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier, surface, correlation_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO audit_log (ts, skill, tool, params, result, status, duration_ms, agent, workflow_id, user, risk_level, rationale, approved_by, risk_tier, surface, correlation_id, role)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -200,6 +204,7 @@ class AuditEngine:
         risk_tier: str = "",
         surface: str = "",
         correlation_id: str | None = None,
+        role: str = "",
     ) -> None:
         """Write one audit record.  Never raises — swallows errors to avoid
         disrupting the actual tool execution.
@@ -233,6 +238,7 @@ class AuditEngine:
                     risk_tier,
                     surface,
                     _current_correlation_id() if correlation_id is None else correlation_id,
+                    role,
                 ),
             )
             conn.commit()
@@ -321,6 +327,7 @@ class AuditEngine:
         limit: int = 50,
         surface: str | None = None,
         correlation_id: str | None = None,
+        role: str | None = None,
     ) -> list[dict[str, Any]]:
         """Query audit records with optional filters.
 
@@ -344,6 +351,9 @@ class AuditEngine:
         if correlation_id:
             clauses.append("correlation_id = ?")
             values.append(correlation_id)
+        if role:
+            clauses.append("role = ?")
+            values.append(role)
         if status:
             clauses.append("status = ?")
             values.append(status)

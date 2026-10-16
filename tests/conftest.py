@@ -77,3 +77,19 @@ def _declared_environment():
     set_environment_resolver(lambda _target: "lab")
     yield
     set_environment_resolver(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_roles():
+    """`serve.configure` sets the process surface and binds roles (HLD §18).
+
+    Left behind, a later test's tool call would run "inside a network server" with
+    no caller and be refused by the no-caller rule, so both are restored per test.
+    """
+    import vmware_policy.roles as roles_mod
+    import vmware_policy.surface as surface_mod
+
+    saved = surface_mod._process_surface
+    yield
+    surface_mod._process_surface = saved
+    roles_mod.unbind()

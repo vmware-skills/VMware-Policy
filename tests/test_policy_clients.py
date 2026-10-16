@@ -66,3 +66,39 @@ def test_an_unreadable_clients_value_fails_closed(tmp_path, monkeypatch):
     engine = PolicyEngine(rules)
     _as(monkeypatch, "token:anyone")
     assert engine.check_allowed("delete_vm", env="").allowed is False
+
+
+@pytest.fixture
+def role_engine(tmp_path):
+    rules = tmp_path / "rules.yaml"
+    rules.write_text(
+        "deny:\n"
+        "  - name: readers-no-power\n"
+        "    operations: ['power_*']\n"
+        "    roles: [reader]\n"
+        "    reason: readers may not power anything\n",
+        encoding="utf-8",
+    )
+    return PolicyEngine(rules)
+
+
+def _with_role(monkeypatch, role_name):
+    from vmware_policy import roles as roles_mod
+
+    monkeypatch.setattr(roles_mod, "roles_enabled", lambda: role_name is not None)
+    monkeypatch.setattr(roles_mod, "caller_role", lambda: (None, role_name or "", ""))
+
+
+@pytest.mark.unit
+def test_a_roles_rule_matches_that_role_only(role_engine, monkeypatch):
+    """HLD §18 L6: deny rules can name roles, not only token-name patterns."""
+    _with_role(monkeypatch, "reader")
+    assert role_engine.check_allowed("power_on_vm", env="").allowed is False
+    _with_role(monkeypatch, "admin")
+    assert role_engine.check_allowed("power_on_vm", env="").allowed is True
+
+
+@pytest.mark.unit
+def test_a_roles_rule_does_not_match_without_roles(role_engine, monkeypatch):
+    _with_role(monkeypatch, None)
+    assert role_engine.check_allowed("power_on_vm", env="").allowed is True

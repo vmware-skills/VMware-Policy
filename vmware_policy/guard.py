@@ -99,6 +99,7 @@ def audit_call(
     rationale: str = "",
     approved_by: str = "",
     surface: str | None = None,
+    role: str = "",
 ) -> None:
     """Write exactly one row to ``~/.vmware/audit.db`` — the single audit sink for
     every surface (I-8). Never raises: ``AuditEngine.log`` swallows its own errors
@@ -140,4 +141,6 @@ def audit_call(
         # filed as invalid:<value> with an error, not raised. Values are
         # validated where they are SET (set_process_surface / use_surface).
         surface=_surface_for_row(surface),
+        # HLD §18 D-22: the role in force at call time ('' when roles do not apply).
+        role=role,
     )
