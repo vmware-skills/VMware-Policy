@@ -78,8 +78,10 @@ def _inside(path: str, root: str) -> bool:
         return False
 
 
-def check_host_path(path: str | None) -> None:
+def check_host_path(path: str | os.PathLike[str] | None) -> None:
     """Raise :class:`HostPathRefusedError` if ``path`` resolves into a protected location."""
+    if isinstance(path, os.PathLike):
+        path = os.fspath(path)
     if not isinstance(path, str) or not path.strip():
         return
     real = os.path.realpath(os.path.expanduser(path))

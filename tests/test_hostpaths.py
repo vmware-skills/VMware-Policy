@@ -179,3 +179,12 @@ def test_serving_https_protects_the_token_file_and_tls_files(home, tmp_path):
         with pytest.raises(HostPathRefusedError):
             check_host_path(str(p))
     assert check_host_path(str(pki / "unrelated.txt")) is None
+
+
+@pytest.mark.unit
+def test_a_path_object_is_checked_too(home):
+    from pathlib import Path
+
+    with pytest.raises(HostPathRefusedError):
+        check_host_path(Path(home / ".vmware" / "mcp-tokens"))
+    assert check_host_path(Path(home / "work" / "x")) is None
