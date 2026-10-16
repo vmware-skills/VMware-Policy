@@ -41,6 +41,7 @@ def _run(*args):
 
 @pytest.mark.unit
 def test_create_with_builtin_role_and_list_long(home):
+    assert _run("roles", "enable").exit_code == 0
     r = _run("token", "create", "bob", "--role", "reader")
     assert r.exit_code == 0, r.output
     assert tokens.roles_enabled(home / "mcp-tokens")
@@ -51,15 +52,16 @@ def test_create_with_builtin_role_and_list_long(home):
 
 @pytest.mark.unit
 def test_an_undefined_role_is_refused(home):
+    _run("roles", "enable")
     r = _run("token", "create", "bob", "--role", "nosuch")
     assert r.exit_code == 2 and "not defined" in r.output
-    assert not tokens.roles_enabled(home / "mcp-tokens")
 
 
 @pytest.mark.unit
 def test_custom_role_from_roles_yaml(home):
     (home / "roles.yaml").write_text(ROLES, encoding="utf-8")
     os.chmod(home / "roles.yaml", 0o600)
+    assert _run("roles", "enable").exit_code == 0
     assert _run("token", "create", "o1", "--role", "ops").exit_code == 0
     assert _run("roles", "check").exit_code == 0
 
@@ -78,6 +80,7 @@ def test_enable_moves_legacy_tokens_and_assigns(home):
 
 @pytest.mark.unit
 def test_set_role_and_check_flags_problems(home):
+    _run("roles", "enable")
     _run("token", "create", "bob", "--role", "reader")
     assert _run("token", "set-role", "bob", "admin").exit_code == 0
     (home / "roles.yaml").write_text("roles: [", encoding="utf-8")
@@ -104,3 +107,10 @@ def test_privilege_changes_are_audited(home):
     assert '"old_role": "reader"' in set_role["params"] and '"role": "admin"' in set_role["params"]
     # secrets never reach the audit log
     assert all("secret" not in r["params"].lower() for r in rows)
+
+
+@pytest.mark.unit
+def test_role_token_before_enable_points_at_enable(home):
+    r = _run("token", "create", "bob", "--role", "reader")
+    assert r.exit_code == 2 and "roles enable" in r.output
+    assert not tokens.roles_enabled(home / "mcp-tokens")

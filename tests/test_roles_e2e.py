@@ -82,6 +82,7 @@ def enabled(ops_home):  # noqa: F811
     path = ops_home / "roles.yaml"
     path.write_text(ROLES, encoding="utf-8")
     os.chmod(path, 0o600)
+    tokens.enable_roles()
     secrets = {
         "reader": tokens.create_token("r1", role="reader"),
         "ops": tokens.create_token("o1", role="ops"),

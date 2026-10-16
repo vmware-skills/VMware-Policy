@@ -45,6 +45,7 @@ def test_without_roles_nothing_changes(tmp_path):
 def test_role_token_goes_to_v2_and_old_code_cannot_see_or_clobber_it(tmp_path):
     f = tmp_path / "mcp-tokens"
     tokens.create_token("legacy", f)
+    tokens.enable_roles(f)
     secret = tokens.create_token("bob", f, role="reader")
     assert "bob" not in _old_reader_names(f)
     _old_writer_create(f, "carol")  # an older CLI on the same host
@@ -97,6 +98,7 @@ def test_legacy_line_written_after_enable_is_refused(tmp_path):
 
 def test_name_in_both_files_is_refused(tmp_path):
     f = tmp_path / "mcp-tokens"
+    tokens.enable_roles(f)
     secret = tokens.create_token("alice", f, role="reader")
     # Same name and hash appear in the legacy file too (an old CLI, a hand edit).
     tokens._write(f, {"alice": tokens._hash(secret)})
@@ -105,6 +107,7 @@ def test_name_in_both_files_is_refused(tmp_path):
 
 def test_set_role_and_revoke(tmp_path):
     f = tmp_path / "mcp-tokens"
+    tokens.enable_roles(f)
     tokens.create_token("bob", f, role="reader")
     assert tokens.set_role("bob", "admin", f) == "reader"
     store = TokenStore(f)
@@ -122,14 +125,26 @@ def test_set_role_on_a_legacy_token_points_at_enable(tmp_path):
 
 @pytest.mark.parametrize("bad", ["a:b", "", "-x"])
 def test_role_names_use_the_token_charset(tmp_path, bad):
+    tokens.enable_roles(tmp_path / "t")
     with pytest.raises(TokenError):
         tokens.create_token("bob", tmp_path / "t", role=bad)
 
 
 def test_role_is_read_at_call_time_not_cached(tmp_path):
     f = tmp_path / "mcp-tokens"
+    tokens.enable_roles(f)
     tokens.create_token("bob", f, role="reader")
     store = TokenStore(f)
     assert store.role_of("bob") == "reader"
     tokens.set_role("bob", "admin", f)
     assert store.role_of("bob") == "admin"
+
+
+def test_a_role_token_before_enable_is_refused_and_nothing_changes(tmp_path):
+    """Review B1: --role alone must not switch roles on while legacy tokens keep working."""
+    f = tmp_path / "mcp-tokens"
+    old = tokens.create_token("old", f)
+    with pytest.raises(TokenError, match="roles enable"):
+        tokens.create_token("alice", f, role="reader")
+    assert not tokens.roles_enabled(f)
+    assert TokenStore(f).identify(old) == "old"

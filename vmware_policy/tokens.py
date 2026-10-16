@@ -172,8 +172,8 @@ def create_token(name: str, path: Path | None = None, *, role: str | None = None
     """Create a token for ``name`` and return the secret.
 
     The secret is not stored and cannot be shown again. With ``role`` the token is
-    written to the v2 file (which opts the deployment in to roles); without it,
-    to the legacy file — refused once roles are enabled.
+    written to the v2 file, which requires roles to be enabled (``enable_roles``);
+    without it, to the legacy file — refused once roles are enabled.
     """
     _check_name(name)
     if role is not None:
@@ -185,6 +185,14 @@ def create_token(name: str, path: Path | None = None, *, role: str | None = None
             raise TokenError(
                 f"A token named {name!r} already exists. Revoke it first "
                 f"('vmware-audit token revoke {name}') or choose another name."
+            )
+        if role is not None and not v2_file(path).exists():
+            # Opting in is `roles enable` only (D-24): it also empties the legacy file so
+            # older servers fail closed. Writing a v2 file here would switch roles on while
+            # legacy tokens still work, unchecked, on every older server (review B1).
+            raise TokenError(
+                "Roles are not enabled on this host. Run 'vmware-audit roles enable' first "
+                "(it moves existing tokens to the role file), then create role tokens."
             )
         secret = secrets.token_urlsafe(32)  # 256 bits
         if role is not None:
