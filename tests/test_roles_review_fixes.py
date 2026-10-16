@@ -213,3 +213,18 @@ def test_roles_check_says_what_it_did_not_check(ops_home):  # noqa: F811
     tokens.enable_roles()
     on = CliRunner().invoke(app, ["roles", "check"])
     assert on.exit_code == 0 and "Not checked here" in on.output
+
+
+@pytest.mark.unit
+def test_a_refusal_raised_inside_a_tool_is_audited_with_its_rule(ops_home):  # noqa: F811
+    """Pilot's approve refuses by role from inside its body; the row must say which rule."""
+    from tests.test_roles_e2e import _tool
+    from vmware_policy.policy import PolicyDenied, PolicyResult
+
+    def approve_thing() -> dict:
+        raise PolicyDenied(PolicyResult(False, "role:ops", "may not approve"))
+
+    with pytest.raises(PolicyDenied):
+        _tool(approve_thing)()
+    row = next(r for r in _rows(ops_home) if r["tool"] == "approve_thing")
+    assert row["status"] == "denied" and "role:ops" in row["result"]

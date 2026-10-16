@@ -224,6 +224,10 @@ def vmware_tool(
                         state.status = (
                             "denied" if isinstance(exc, PolicyDenied) else "budget_exceeded"
                         )
+                        if isinstance(exc, PolicyDenied):
+                            # The rule too, so a tool's own refusal (Pilot's
+                            # approve, by role) filters like the others.
+                            state.result = {"error": exc.result.reason, "rule": exc.result.rule}
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)
@@ -274,6 +278,10 @@ def vmware_tool(
                         state.status = (
                             "denied" if isinstance(exc, PolicyDenied) else "budget_exceeded"
                         )
+                        if isinstance(exc, PolicyDenied):
+                            # The rule too, so a tool's own refusal (Pilot's
+                            # approve, by role) filters like the others.
+                            state.result = {"error": exc.result.reason, "rule": exc.result.rule}
                     raise
                 except Exception as exc:
                     _capture_error(state, exc)
