@@ -389,7 +389,9 @@ class _CallState:
         # every 'production' vCenter into one counter — one flaky target tripped
         # the breaker for all of them, 2026-07-18 review). The environment itself
         # is resolved inside guard() for policy scoping, so it is not stored here.
-        self.target, self.resolved_target = _call_target(self.skill, params)
+        self.target, self.resolved_target = _call_target(
+            self.skill, self.tool_name, params, frozenset(signature.parameters)
+        )
 
         # Accountability trail (SOC2 / 等保: who authorized this, and why).
         # Self-attested audit enrichment, not authorization (HLD §8.3): sourced
@@ -405,45 +407,54 @@ class _CallState:
         self.approved_by = "" if network else os.environ.get("VMWARE_AUDIT_APPROVED_BY", "")
 
 
-def _call_target(skill: str, params: dict[str, Any]) -> tuple[str, str]:
+def _call_target(
+    skill: str, tool: str, params: dict[str, Any], arg_names: frozenset[str] = frozenset()
+) -> tuple[str, str]:
     """``(target, resolved_target)`` for a call.
 
-    ``target`` is what keys the per-target breakers and reaches guard(): the
-    argument the caller passed, or — when they omitted it — the name the
-    connection will use, as the skill's role resolver reports it (HLD §18; the
-    same lookup the role check uses). ``resolved_target`` is that resolved name,
-    set only when the caller omitted the argument, so the audit row can say
-    which system was used without rewriting what the caller sent.
+    ``target`` is unchanged from before: the ``target`` (or ``env``) argument as
+    passed, or ``""``. It keys the per-target breakers and reaches guard(), and
+    the CLI binds it the same way (I-3), so it must not move.
 
-    Found on a real Log Insight (2026-10-17): calls without ``target`` ran on the
-    default target and were audited as ``"target": null``, so the audit log
-    could not say which appliance had been read. A skill without a resolver, or
-    a resolver that fails (no default configured), leaves both empty: the call
-    itself reports that error.
+    ``resolved_target`` is for the audit row only: when a tool that acts on ONE
+    target (role scope ``one``, HLD §18) is called without its target argument,
+    the name the connection will use, from the skill's role resolver. Found on a
+    real Log Insight (2026-10-17): such calls ran on the default target and were
+    audited as ``"target": null``, so the audit log could not say which appliance
+    had been read. Tools that read every target or none get nothing — naming the
+    default there would claim a system that was not the one used (review MED-1).
+    A missing resolver, or one that fails (no default configured), gives ``""``.
+
+    "Acts on one target" follows the role check's ``scope_of``, except that
+    "takes the target argument" is read from the tool's own signature: the
+    server's tool registry (``target_params``) is only recorded for a network
+    transport, and stdio is where most calls run.
     """
-    meta = None
+    raw = params.get("target", params.get("env", ""))
+    target = str(raw) if raw else ""
     try:
         from vmware_policy import roles
 
         meta = roles.metadata(skill)
     except Exception:  # noqa: BLE001 — roles are optional; never break a call
         meta = None
-    param = meta.target_param if meta is not None else "target"
-    if param == "target":
-        raw = params.get("target", params.get("env", ""))
-    else:
-        raw = params.get(param)
-    if raw:
-        return str(raw), ""
-    resolver = meta.resolver if meta is not None else None
-    if resolver is None:
-        return "", ""
+    if meta is None or meta.resolver is None:
+        return target, ""
+    # The role check's scope_of(), with the tool's own signature standing in for
+    # the network-only registry: tagged scope first, then "takes the target
+    # argument", then the skill's untagged default (AVI: "one").
+    scope = meta.target_scope.get(tool) or (
+        "one" if meta.target_param in arg_names else meta.untagged_scope
+    )
+    if scope != "one":
+        return target, ""
+    if params.get(meta.target_param):
+        return target, ""
     try:
-        name = resolver(None)
+        name = meta.resolver(None)
     except Exception:  # noqa: BLE001 — an unresolvable default is the tool's error to report
-        return "", ""
-    name = str(name) if name else ""
-    return name, name
+        return target, ""
+    return target, str(name) if name else ""
 
 
 def _audit_params(state: _CallState) -> dict[str, Any]:

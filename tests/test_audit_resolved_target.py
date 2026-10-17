@@ -36,6 +36,15 @@ def engine(tmp_path):
     policy_mod._engine = None
 
 
+def _declare(resolver, *, target_param="target", one=True):
+    # No register_registry: on stdio the server records none, and that is the
+    # path most calls take. Scope comes from the tool's own signature + tags.
+    roles.declare_role_metadata(
+        SKILL, resolver=resolver, target_param=target_param,
+        target_scope={} if one else {"read_things": "all"},
+    )
+
+
 def _tool(param: str = "target"):
     """A read tool whose module path makes the decorator infer SKILL."""
     if param == "target":
@@ -55,7 +64,7 @@ def _params(engine) -> dict:
 
 
 def test_omitted_target_is_recorded_as_the_resolved_default(engine):
-    roles.declare_role_metadata(SKILL, resolver=lambda t: t or "lab-default")
+    _declare(lambda t: t or "lab-default")
     _tool()()
     params = _params(engine)
     assert params["resolved_target"] == "lab-default"
@@ -64,7 +73,7 @@ def test_omitted_target_is_recorded_as_the_resolved_default(engine):
 
 
 def test_explicit_target_is_recorded_as_passed(engine):
-    roles.declare_role_metadata(SKILL, resolver=lambda t: "never-used")
+    _declare(lambda t: "never-used")
     _tool()(target="vc-prod")
     params = _params(engine)
     assert params["target"] == "vc-prod" and "resolved_target" not in params
@@ -74,7 +83,7 @@ def test_resolver_failure_leaves_the_target_empty_not_the_call_broken(engine):
     def boom(_t):
         raise KeyError("no default")
 
-    roles.declare_role_metadata(SKILL, resolver=boom)
+    _declare(boom)
     assert _tool()() == "ok"
     assert "resolved_target" not in _params(engine)
 
@@ -86,17 +95,44 @@ def test_skill_without_a_resolver_is_unchanged(engine):
 
 def test_declared_target_param_is_honoured(engine):
     # AVI names its target `controller`; omitted, it resolves like `target`.
-    roles.declare_role_metadata(
-        SKILL, resolver=lambda t: t or "avi-default", target_param="controller"
-    )
+    _declare(lambda t: t or "avi-default", target_param="controller")
     _tool("controller")()
     assert _params(engine)["resolved_target"] == "avi-default"
 
 
 def test_explicit_declared_target_param_is_recorded(engine):
-    roles.declare_role_metadata(
-        SKILL, resolver=lambda t: t or "avi-default", target_param="controller"
-    )
+    _declare(lambda t: t or "avi-default", target_param="controller")
     _tool("controller")(controller="avi-2")
     params = _params(engine)
     assert params["controller"] == "avi-2" and "resolved_target" not in params
+
+
+def test_a_tool_that_reads_every_target_gets_no_resolved_target(engine):
+    # e.g. Monitor cross_vcenter_attention, AVI's AKO tools (review MED-1)
+    _declare(lambda t: t or "lab-default", one=False)
+    _tool()()
+    assert "resolved_target" not in _params(engine)
+
+
+def test_guard_and_breakers_still_see_the_target_as_passed():
+    # resolved_target is audit-only: guard()/pattern keys and the CLI bind the
+    # same value as before (I-3, review MED-2/LOW-4).
+    from vmware_policy.decorators import _call_target
+
+    _declare(lambda t: t or "lab-default")
+    args = frozenset({"target"})
+    assert _call_target(SKILL, "read_things", {"target": None}, args) == ("", "lab-default")
+    assert _call_target(SKILL, "read_things", {"target": "vc1"}, args) == ("vc1", "")
+    # a tool without the target argument acts on no target: nothing resolved
+    assert _call_target(SKILL, "read_things", {}, frozenset()) == ("", "")
+    # ...unless the skill says its untargeted tools act on the default (AVI)
+    roles.declare_role_metadata(SKILL, resolver=lambda t: t or "avi-default",
+                                target_param="controller", untagged_scope="one")
+    assert _call_target(SKILL, "ako_status", {}, frozenset()) == ("", "avi-default")
+    roles.declare_role_metadata(SKILL, resolver=lambda t: t or "avi-default",
+                                target_param="controller", untagged_scope="one",
+                                target_scope={"ako_status": "all"})
+    assert _call_target(SKILL, "ako_status", {}, frozenset()) == ("", "")
+    _declare(lambda t: t or "avi-default", target_param="controller")
+    assert _call_target(SKILL, "read_things", {"controller": "avi-2"},
+                        frozenset({"controller"})) == ("", "")

@@ -1,14 +1,16 @@
 ## Unreleased (1.24.1) — the audit row names the target a call used
 
-* When a tool is called without its target argument, the audit row's parameters now also carry `resolved_target`:
-  the target the connection used, from the skill's role resolver (HLD §18). The parameters the caller sent are
-  recorded unchanged (`"target": null`). Before, `vmware-audit log` could not say which system such a call read.
-  A skill without a resolver, or one whose default does not resolve, is recorded as before.
-* The per-target circuit breakers key such a call on the resolved target too. Before, every call that omitted
-  the target was counted under `""`, apart from the same target called by name. A skill that names its target
-  argument differently (AVI's `controller`) is keyed on that argument.
-* Needs a fixed resolver in the skill: Aria, Log-Insight, NSX, NSX-Security and VDI raised on every call before
-  their fixes, so their calls are recorded as before until those releases.
+* When a tool that acts on one target is called without its target argument, the audited parameters now also
+  carry `resolved_target`: the target the connection used, from the skill's role resolver (HLD §18). The
+  parameters the caller sent are recorded unchanged (`"target": null`). Before, `vmware-audit log` could not say
+  which system such a call read.
+* "Acts on one target" follows the role check's scope rules: the tool takes the skill's target argument (AVI:
+  `controller`), or the skill's untargeted tools act on its default, and the skill has not tagged the tool as
+  reading every target or none. Tools such as Monitor's `cross_vcenter_attention` or AVI's AKO tools get no
+  `resolved_target`.
+* Audit only: `guard()`, the per-target breakers and the CLI see exactly the same target as before.
+* Needs a working resolver in the skill. Aria, Log-Insight, NSX, NSX-Security and VDI raised on every call before
+  their fixes, so until those releases their rows are recorded as before.
 
 ## v1.24.0 — roles for network callers (HLD §18)
 
