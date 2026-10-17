@@ -1,3 +1,15 @@
+## Unreleased (1.24.1) — the audit row names the target a call used
+
+* When a tool is called without its target argument, the audit row's parameters now also carry `resolved_target`:
+  the target the connection used, from the skill's role resolver (HLD §18). The parameters the caller sent are
+  recorded unchanged (`"target": null`). Before, `vmware-audit log` could not say which system such a call read.
+  A skill without a resolver, or one whose default does not resolve, is recorded as before.
+* The per-target circuit breakers key such a call on the resolved target too. Before, every call that omitted
+  the target was counted under `""`, apart from the same target called by name. A skill that names its target
+  argument differently (AVI's `controller`) is keyed on that argument.
+* Needs a fixed resolver in the skill: Aria, Log-Insight, NSX, NSX-Security and VDI raised on every call before
+  their fixes, so their calls are recorded as before until those releases.
+
 ## v1.24.0 — roles for network callers (HLD §18)
 
 Several people or agents can share one HTTPS endpoint with different jobs. Existing tokens keep working as before

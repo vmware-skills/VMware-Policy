@@ -336,6 +336,7 @@ class _CallState:
         "pattern_match",
         "safe_params",
         "target",
+        "resolved_target",
         "risk_level",
         "timeout_seconds",
         "rationale",
@@ -388,8 +389,7 @@ class _CallState:
         # every 'production' vCenter into one counter — one flaky target tripped
         # the breaker for all of them, 2026-07-18 review). The environment itself
         # is resolved inside guard() for policy scoping, so it is not stored here.
-        target = params.get("target", params.get("env", ""))
-        self.target = str(target) if target else ""
+        self.target, self.resolved_target = _call_target(self.skill, params)
 
         # Accountability trail (SOC2 / 等保: who authorized this, and why).
         # Self-attested audit enrichment, not authorization (HLD §8.3): sourced
@@ -403,6 +403,54 @@ class _CallState:
         network = current_caller() is not None
         self.rationale = "" if network else os.environ.get("VMWARE_AUDIT_RATIONALE", "")
         self.approved_by = "" if network else os.environ.get("VMWARE_AUDIT_APPROVED_BY", "")
+
+
+def _call_target(skill: str, params: dict[str, Any]) -> tuple[str, str]:
+    """``(target, resolved_target)`` for a call.
+
+    ``target`` is what keys the per-target breakers and reaches guard(): the
+    argument the caller passed, or — when they omitted it — the name the
+    connection will use, as the skill's role resolver reports it (HLD §18; the
+    same lookup the role check uses). ``resolved_target`` is that resolved name,
+    set only when the caller omitted the argument, so the audit row can say
+    which system was used without rewriting what the caller sent.
+
+    Found on a real Log Insight (2026-10-17): calls without ``target`` ran on the
+    default target and were audited as ``"target": null``, so the audit log
+    could not say which appliance had been read. A skill without a resolver, or
+    a resolver that fails (no default configured), leaves both empty: the call
+    itself reports that error.
+    """
+    meta = None
+    try:
+        from vmware_policy import roles
+
+        meta = roles.metadata(skill)
+    except Exception:  # noqa: BLE001 — roles are optional; never break a call
+        meta = None
+    param = meta.target_param if meta is not None else "target"
+    if param == "target":
+        raw = params.get("target", params.get("env", ""))
+    else:
+        raw = params.get(param)
+    if raw:
+        return str(raw), ""
+    resolver = meta.resolver if meta is not None else None
+    if resolver is None:
+        return "", ""
+    try:
+        name = resolver(None)
+    except Exception:  # noqa: BLE001 — an unresolvable default is the tool's error to report
+        return "", ""
+    name = str(name) if name else ""
+    return name, name
+
+
+def _audit_params(state: _CallState) -> dict[str, Any]:
+    """The parameters as passed, plus ``resolved_target`` when one was resolved."""
+    if not state.resolved_target:
+        return state.safe_params
+    return {**state.safe_params, "resolved_target": state.resolved_target}
 
 
 def _bind_params(
@@ -729,7 +777,7 @@ def _finalize(state: _CallState) -> None:
     audit_call(
         state.skill,
         state.tool_name,
-        params=state.safe_params,
+        params=_audit_params(state),
         result=_with_pattern_context(
             _redact_credential_keys(state.result), pattern_id, pattern_armed
         ),
