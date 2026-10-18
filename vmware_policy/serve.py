@@ -147,10 +147,16 @@ def _add_healthz(server: Any) -> None:
 def configure(server: Any, opts: ServeOptions) -> str:
     """Validate ``opts`` and prepare ``server`` for its transport. Returns the audit surface.
 
-    Raises ServeError before anything binds. stdio leaves the server untouched.
+    Raises ServeError before anything binds. For stdio the only change is that
+    failed calls are marked ``isError`` (``vmware_policy.frame``).
     """
     store = _check(opts)
     surface = _SURFACE[opts.transport]
+    # Every transport, stdio included: a call @vmware_tool audits as failed is
+    # an isError frame (vmware_policy.frame).
+    from vmware_policy.frame import install as _install_frame_errors
+
+    _install_frame_errors(server)
     if store is None:
         set_process_surface(surface)
         return surface

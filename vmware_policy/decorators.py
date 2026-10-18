@@ -34,6 +34,7 @@ import traceback
 from functools import wraps
 from typing import Any
 
+from vmware_policy import frame as _frame
 from vmware_policy.audit import detect_agent
 from vmware_policy.budget import BudgetExceeded, get_budget
 from vmware_policy.guard import audit_call, guard
@@ -209,6 +210,9 @@ def vmware_tool(
                 # `report_tool_failure` must not mark its caller failed, and a
                 # signal must not survive into the next call on this task.
                 token = _failure_signal.set(None)
+                # The MCP request's failure mark (vmware_policy.frame): only the
+                # outermost tool call of a request may set it.
+                frame_sink, frame_token = _frame.claim()
                 try:
                     _role_check(state)
                     _check_common_arguments(state.raw_params)
@@ -243,6 +247,9 @@ def vmware_tool(
                     try:
                         _finalize(state)
                     finally:
+                        if state.status == "error":
+                            _frame.mark_failed(frame_sink)
+                        _frame.release(frame_token)
                         _failure_signal.reset(token)
         else:
 
@@ -263,6 +270,9 @@ def vmware_tool(
                 # `report_tool_failure` must not mark its caller failed, and a
                 # signal must not survive into the next call on this task.
                 token = _failure_signal.set(None)
+                # The MCP request's failure mark (vmware_policy.frame): only the
+                # outermost tool call of a request may set it.
+                frame_sink, frame_token = _frame.claim()
                 try:
                     _role_check(state)
                     _check_common_arguments(state.raw_params)
@@ -297,6 +307,9 @@ def vmware_tool(
                     try:
                         _finalize(state)
                     finally:
+                        if state.status == "error":
+                            _frame.mark_failed(frame_sink)
+                        _frame.release(frame_token)
                         _failure_signal.reset(token)
 
         # ── Attach metadata for harness / introspection ───────────

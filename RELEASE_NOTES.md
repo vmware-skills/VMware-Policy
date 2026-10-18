@@ -1,3 +1,21 @@
+## Unreleased — failed calls are isError frames
+
+* **A call `@vmware_tool` audits as failed is now a failed MCP frame (`isError: true`).** Measured 2026-10-18 with a
+  live gate over the family (handbook `scripts/lib/tool_failures_set_iserror.py`): 272 of 349 tool calls in 13 of
+  14 skills answered a failure — `report_tool_failure` + `"Error: ..."`, or the `{"error": ...}` envelope — with
+  `isError: false`. The audit row said `error`, the frame said success, so a client that reads the frame (Pilot
+  `--dispatch`, any agent) took a failed write, or a failed undo during rollback, for a success. Only vmware-aiops
+  marked its own frames.
+* How: the decorator's own verdict marks the in-flight MCP request (outermost tool call only — an inner tool's
+  failure that the outer tool recovered from does not count), and `serve.configure` installs a `tools/call`
+  handler, for every transport including stdio, that re-wraps a marked result with `isError: true`. Content and
+  `structuredContent` are byte-identical; only the flag changes. Prose is still never read: a string is a failure
+  only when the tool declared it with `report_tool_failure`, the rule the audit row already follows. New module
+  `vmware_policy.frame`.
+* Skills need no change: every family server starts through `run_server`. The fix reaches them when this release
+  is relocked into each skill.
+
+
 ## v1.24.1 — the audit row names the target a call used
 
 * When a tool that acts on one target is called without its target argument, the audited parameters now also
