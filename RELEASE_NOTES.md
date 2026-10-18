@@ -1,23 +1,27 @@
-## Unreleased — failed calls are isError frames
+## v1.24.2 — failed calls are isError frames
 
 * **A call `@vmware_tool` audits as failed is now a failed MCP frame (`isError: true`).** Measured 2026-10-18 with a
-  live gate over the family (handbook `scripts/lib/tool_failures_set_iserror.py`): 272 of 349 tool calls in 13 of
-  14 skills answered a failure — `report_tool_failure` + `"Error: ..."`, or the `{"error": ...}` envelope — with
+  live gate over the family (handbook `scripts/lib/tool_failures_set_iserror.py`): about 270 of 349 tool calls in
+  13 of 14 skills (all but vmware-aiops) answered a failure — `report_tool_failure` + `"Error: ..."`, or the `{"error": ...}` envelope — with
   `isError: false`. The audit row said `error`, the frame said success. A client that reads only the frame took
   those failures for successes; Pilot `--dispatch` already caught the `{"error": ...}` envelope itself, but read
   the string-shaped failures (mostly AVI's) as successes, including a failed undo during rollback. Only
   vmware-aiops marked its own frames.
-* How: the decorator's own verdict marks the in-flight MCP request (outermost tool call only — an inner tool's
-  failure that the outer tool recovered from does not count), and `serve.configure` installs a `tools/call`
+* How: the decorator's own verdict marks the in-flight MCP request (outermost `@vmware_tool` call only — an inner
+  tool's failure that the outer tool recovered from does not count; a tool not wrapped in `@vmware_tool` is never
+  marked), and `serve.configure` installs a `tools/call`
   handler, for every transport including stdio, that re-wraps a marked result with `isError: true`. Content and
   `structuredContent` are byte-identical; only the flag changes. Prose is still never read: a string is a failure
   only when the tool declared it with `report_tool_failure`, the rule the audit row already follows. New module
   `vmware_policy.frame`.
 * Skills need no change: every family server starts through `run_server`. Installs that resolve the newest Policy
   (`uvx`, `pip`, `uv tool install`) get it with this release; the family's locked venvs get it on relock.
-* Known limit: the rule is the audit row's (`_returned_failure`). A successful call that reports some other
-  object's failure under a top-level `error` key is now also an `isError` frame; no such tool was found, but the
-  family has not been surveyed for one.
+* What counts is the audit row's rule (`_returned_failure`): a top-level truthy `error`, a one-row
+  `[{"error": ...}]`, `outcome: "failed"` (so a Pilot `run_workflow`/`approve` whose workflow failed is an `isError`
+  frame), or `report_tool_failure`. Known limit: a successful call that reports some other object's failure under
+  a top-level `error` key is now also an `isError` frame; no such tool was found, but the family has not been
+  surveyed for one. A marked frame skips the SDK's server-side output-schema re-check (FastMCP already validated
+  the result).
 
 
 ## v1.24.1 — the audit row names the target a call used

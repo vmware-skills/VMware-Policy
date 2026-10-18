@@ -22,7 +22,10 @@ Prose is not read: a string is a failure only if the tool declared it with
 from __future__ import annotations
 
 import contextvars
+import logging
 from typing import Any
+
+_log = logging.getLogger("vmware-policy.frame")
 
 #: One list per MCP request, set by the installed handler. The decorator of the
 #: outermost tool call appends to it; nested in-process tool calls see ``None``
@@ -75,7 +78,11 @@ def install(server: Any) -> None:
     """
     lowlevel = getattr(server, "_mcp_server", None)
     if lowlevel is None or not hasattr(server, "call_tool"):
-        return  # not a FastMCP server; nothing to wrap
+        # Not a FastMCP server (or an SDK that moved its internals): say so —
+        # failed calls on it will not be marked isError.
+        _log.warning("vmware-policy: %s has no FastMCP lowlevel server; failed tool calls "
+                     "will not be marked isError", type(server).__name__)
+        return
     call = server.call_tool
 
     async def call_tool(name: str, arguments: dict[str, Any]) -> Any:

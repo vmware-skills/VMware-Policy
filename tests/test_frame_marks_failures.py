@@ -286,3 +286,42 @@ def test_an_unknown_result_shape_is_returned_untouched():
 
     odd = {"taskId": "t-1"}
     assert _error_frame(odd) is odd
+
+
+@pytest.mark.unit
+def test_the_installed_handler_is_the_wrapper(ops_home):
+    """A future SDK that moved the handler would otherwise lose the marking silently."""
+    from mcp import types as mcp_types
+
+    mcp = _server(configured=False)
+    before = mcp._mcp_server.request_handlers[mcp_types.CallToolRequest]
+    serve.configure(mcp, serve.ServeOptions(skill="probe"))
+    assert mcp._mcp_server.request_handlers[mcp_types.CallToolRequest] is not before
+
+
+@pytest.mark.unit
+def test_outcome_failed_is_marked(ops_home):
+    """A Pilot-style result: the call ran, the workflow failed — audited as error."""
+    mcp = FastMCP("probe3")
+
+    @mcp.tool()
+    @vmware_tool(risk_level="low")
+    def run() -> dict:
+        """x"""
+        return {"outcome": "failed", "state": "failed"}
+
+    serve.configure(mcp, serve.ServeOptions(skill="probe3"))
+    assert _call(mcp, "run").isError is True
+
+
+@pytest.mark.unit
+def test_a_server_without_a_lowlevel_handler_warns(caplog):
+    from vmware_policy import frame
+
+    class NotFast:
+        def call_tool(self, *a):
+            return None
+
+    with caplog.at_level("WARNING"):
+        frame.install(NotFast())
+    assert "isError" in caplog.text

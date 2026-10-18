@@ -285,6 +285,37 @@ def test_a_returned_failure_in_the_worker_still_audits_as_error(ops_home):
 
 
 @pytest.mark.unit
+def test_a_returned_failure_is_an_iserror_frame_on_the_wire(ops_home):
+    """1.24.2: the frame agrees with the audit row on the network path too."""
+    secret = tokens.create_token("alice")
+    server = FastMCP("t3")
+
+    @server.tool(annotations={"readOnlyHint": True})
+    @vmware_tool
+    def get_broken(target: str = "") -> dict:
+        """[READ] Returns an error envelope."""
+        return {"error": "nope"}
+
+    @server.tool(annotations={"readOnlyHint": True})
+    @vmware_tool
+    def get_fine(target: str = "") -> dict:
+        """[READ] Succeeds."""
+        return {"ok": True}
+
+    serve.configure(server, serve.ServeOptions(skill="storage", transport="http"))
+
+    async def flow(c):
+        _, _, headers = await _session(c, secret)
+        bad = await _call(c, headers, "get_broken", {"target": "x"})
+        good = await _call(c, headers, "get_fine", {"target": "x"}, rid=3)
+        return bad, good
+
+    (_, bad), (_, good) = _run_app(server, flow)
+    assert bad["result"]["isError"] is True
+    assert good["result"]["isError"] is False
+
+
+@pytest.mark.unit
 def test_stdio_is_left_alone(ops_home):
     server = _server()
     tools_before = {t.name: t.fn for t in server._tool_manager.list_tools()}
