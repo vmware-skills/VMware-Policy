@@ -23,7 +23,7 @@ dependencies = [
 dev = [
     # serve() and the token verifier are exercised against the real SDK; the
     # skills bring mcp at runtime, so it stays out of the core dependencies.
-    "mcp[cli]>=1.28,<2.0",
+    "mcp[cli]>=1.30,<2.0",
     "pytest>=8.0,<10.0",
     "pytest-cov>=5.0,<8.0",
     "ruff>=0.5,<1.0",
