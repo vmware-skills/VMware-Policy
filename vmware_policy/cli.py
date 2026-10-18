@@ -239,7 +239,7 @@ def undo_show(undo_id: str) -> None:
 @cli_local("prints the local policy rules")
 def policy(
     operation: str = typer.Option(
-        "", "--operation", "-o", help="Tool name to explain, e.g. vm_delete."
+        "", "--operation", "-o", help="Tool name to explain, e.g. delete_vm."
     ),
     env: str = typer.Option("", "--env", "-e", help="Target environment, e.g. production."),
     risk: str = typer.Option("medium", "--risk", "-r", help="Risk level the tool declares."),

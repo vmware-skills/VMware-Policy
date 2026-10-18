@@ -115,7 +115,7 @@ def audit_call(
     enrichment, not authorization (HLD §8.3).
 
     The free-text scrubber runs over ``result`` too (review D3, 2026-09-15). A
-    result that quotes text it was handed — vmware-debug's ``incident_timeline``
+    result that quotes text it was handed — vmware-debug's ``build_incident_timeline``
     returns event text as ``hypotheses[].sample_text`` — carries a credential
     under no credential-shaped key, and a probe filed ``password=…`` and
     ``https://user:pass@host`` from an event in plain text. A tool whose whole

@@ -16,8 +16,8 @@ LLM reasons" guardrail.
 A tool's ``undo`` is a callable ``(params, result) -> dict | None``:
 
     @vmware_tool(risk_level="medium", undo=lambda p, r: {
-        "tool": "vm_power_on", "params": {"vm_name": p["vm_name"]}})
-    def vm_power_off(vm_name: str, target: str = "") -> dict: ...
+        "tool": "power_on_vm", "params": {"vm_name": p["vm_name"]}})
+    def power_off_vm(vm_name: str, target: str = "") -> dict: ...
 
 Returning ``None`` means "no inverse for this call" (nothing is recorded).
 """

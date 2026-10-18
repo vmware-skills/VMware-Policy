@@ -128,7 +128,7 @@ def _says_it_failed(result: dict[str, Any]) -> bool:
     ``ok`` and ``success`` are deliberately not read (review decision D2, the
     same day). No producer in the family uses ``ok: False`` / ``success: False``
     to mean "this call failed" without also carrying a truthy ``error``, and one
-    uses ``success: False`` as the *answer*: vmware-aiops ``vmk_ping`` returns it
+    uses ``success: False`` as the *answer*: vmware-aiops ``ping_from_vmk`` returns it
     for an unreachable host or an esxcli fault, which for an MTU probe is the
     result being asked for. Reading it filed those successful probes ``error``
     and disagreed with AIops' MCP frame detector (``_is_error_envelope``), which

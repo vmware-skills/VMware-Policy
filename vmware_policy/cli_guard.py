@@ -2,7 +2,7 @@
 
 A CLI command that changes remote state routes through the SAME shared
 ``guard()`` + ``audit_call()`` as the MCP surface, so ``vmware-aiops vm delete``
-run through Bash is authorized and recorded exactly like the ``vm_delete`` MCP
+run through Bash is authorized and recorded exactly like the ``delete_vm`` MCP
 tool — invariants I-1 (no unguarded write door), I-3 (surface-symmetric policy)
 and I-8 (every write audited, one store). The interactive double-confirm stays
 layered on top as the surface-specific confirmation (HLD §7).
@@ -116,7 +116,7 @@ def guarded(
         @vm_app.command("delete")
         @cli_errors
         @guarded(risk_level="critical")
-        def vm_delete(vm_name: str, target: TargetOption = None, ...):
+        def delete_vm(vm_name: str, target: TargetOption = None, ...):
             ...
 
     Args:

@@ -231,7 +231,7 @@ def _fingerprint(tool: str, params: dict | None) -> str:
     digest of them. It used to key on the redacted copy written to the audit row,
     where every ``sensitive_params`` value is ``***``, so calls that differed only
     in a redacted argument were "identical" and the 26th was refused (review,
-    2026-09-15: vmware-debug ``incident_timeline`` with different events). A digest
+    2026-09-15: vmware-debug ``build_incident_timeline`` with different events). A digest
     never collides for different inputs and keeps neither the arguments nor a
     secret in them in memory. Falls back to repr on non-serializable values.
     """
