@@ -1,4 +1,4 @@
-## Unreleased (1.24.1) — the audit row names the target a call used
+## v1.24.1 — the audit row names the target a call used
 
 * When a tool that acts on one target is called without its target argument, the audited parameters now also
   carry `resolved_target`: the target the connection used, from the skill's role resolver (HLD §18). The
