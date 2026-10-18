@@ -56,8 +56,12 @@ def _error_frame(converted: Any) -> Any:
         return converted.model_copy(update={"isError": True})
     if isinstance(converted, tuple) and len(converted) == 2:
         unstructured, structured = converted
-    else:
+    elif isinstance(converted, list):
         unstructured, structured = converted, None
+    else:
+        # A shape FastMCP 1.30 does not return (a task handle, say): leave it as
+        # it is rather than guess how to mark it. The audit row still says error.
+        return converted
     return mcp_types.CallToolResult(
         content=list(unstructured), structuredContent=structured, isError=True
     )

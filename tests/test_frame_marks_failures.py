@@ -109,6 +109,7 @@ def _text(result) -> str:
 
 
 @pytest.mark.unit
+# "raises" is a control: FastMCP always made a raised exception an error frame.
 @pytest.mark.parametrize("tool", ["says_error", "envelope", "one_row", "raises"])
 def test_a_failed_call_is_an_error_frame(ops_home, tool):
     assert _call(_server(), tool).isError is True
@@ -190,3 +191,98 @@ def test_a_subclass_that_already_marks_is_unaffected(ops_home):
     serve.configure(mcp, serve.ServeOptions(skill="probe"))
     assert _call(mcp, "envelope").isError is True
     assert _call(mcp, "fine").isError is False
+
+
+# ── review of b7295ea: paths the first tests did not pin ─────────────────
+
+
+def _rich_server(offloaded: bool, pooled: bool = False) -> FastMCP:
+    """Async tools that await (so concurrent calls really interleave), a nested
+    envelope the outer tool returns as its own, and the network path's
+    worker-thread offload."""
+    import anyio
+
+    mcp = FastMCP("probe2")
+
+    @mcp.tool()
+    @vmware_tool(risk_level="low")
+    async def slow_fail(delay: float = 0.05) -> dict:
+        """Fails after yielding to the loop."""
+        await anyio.sleep(delay)
+        return {"error": "late failure"}
+
+    @mcp.tool()
+    @vmware_tool(risk_level="low")
+    async def slow_ok(delay: float = 0.05) -> dict:
+        """Succeeds after yielding to the loop."""
+        await anyio.sleep(delay)
+        return {"ok": True}
+
+    @vmware_tool(risk_level="low")
+    def inner() -> dict:
+        return {"error": "inner failed"}
+
+    @mcp.tool()
+    @vmware_tool(risk_level="low")
+    def passes_inner() -> dict:
+        """Returns a nested tool's failure as its own result: a failed call."""
+        return inner()
+
+    @mcp.tool()
+    @vmware_tool(risk_level="low")
+    def sync_fail() -> str:
+        """A sync tool the network path runs in a worker thread."""
+        report_tool_failure("boom")
+        return "Error: boom"
+
+    @mcp.tool()
+    @vmware_tool(risk_level="low")
+    def sync_ok() -> str:
+        """x"""
+        return "fine"
+
+    if offloaded:
+        from vmware_policy.callgate import offload_sync_tools
+
+        offload_sync_tools(mcp, pooled=pooled)
+    serve.configure(mcp, serve.ServeOptions(skill="probe2"))
+    return mcp
+
+
+@pytest.mark.unit
+def test_interleaved_async_calls_are_marked_per_call(ops_home):
+    """A request-global flag would mark the successes too."""
+    mcp = _rich_server(offloaded=False)
+
+    async def run():
+        async with create_connected_server_and_client_session(mcp._mcp_server) as client:
+            return await asyncio.gather(
+                client.call_tool("slow_ok", {"delay": 0.15}),
+                client.call_tool("slow_fail", {"delay": 0.05}),
+                client.call_tool("slow_ok", {"delay": 0.10}),
+            )
+
+    assert [r.isError for r in asyncio.run(run())] == [False, True, False]
+
+
+@pytest.mark.unit
+def test_an_outer_tool_returning_the_inner_failure_is_marked(ops_home):
+    assert _call(_rich_server(offloaded=False), "passes_inner").isError is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pooled", [False, True])
+def test_the_network_paths_worker_threads_carry_the_mark(ops_home, pooled):
+    """offload_sync_tools runs sync tools in a worker with a copied context."""
+    mcp = _rich_server(offloaded=True, pooled=pooled)
+    assert _call(mcp, "sync_fail").isError is True
+    assert _call(mcp, "sync_ok").isError is False
+
+
+@pytest.mark.unit
+def test_an_unknown_result_shape_is_returned_untouched():
+    """_error_frame must not crash on a shape FastMCP may return later (tasks)."""
+    from vmware_policy.frame import _error_frame
+
+    odd = {"taskId": "t-1"}
+    assert _error_frame(odd) is odd
