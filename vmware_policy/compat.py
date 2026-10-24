@@ -125,7 +125,7 @@ def version_remedy(req: Requires, detected: Optional[str]) -> Optional[str]:
     detected_str = str(detected).strip()
     return (
         f"{req.feature} requires {req.product} {req.minimum_str} or newer; this "
-        f"appliance reports {detected_str}. The id you passed is not the problem "
+        f"appliance reports {detected_str}. Nothing you passed is the problem "
         f"— the endpoint does not exist on this version. Upgrade, or point at a "
         f"{req.minimum_str}+ appliance."
     )
