@@ -17,7 +17,10 @@ def test_an_older_appliance_is_named_and_the_id_is_exonerated() -> None:
     assert msg is not None
     assert "8.6.4" in msg and "9.0" in msg
     # The point of the whole module: stop sending people after the UUID.
-    assert "id you passed is not the problem" in msg
+    assert "Nothing you passed is the problem" in msg
+    # 2026-10-24: list_findings and promql_query take no id, and "the id you
+    # passed" told the model about an argument it never sent.
+    assert "id you passed" not in msg
 
 
 def test_an_appliance_that_meets_the_floor_gets_no_version_remedy() -> None:
