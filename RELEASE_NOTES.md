@@ -1,3 +1,11 @@
+## v1.24.3 — a version-floor 404 no longer mentions an id
+
+* **`version_remedy` no longer says "The id you passed is not the problem".** It reached calls that take no id
+  (vmware-aria `list_findings` and `promql_query` on an 8.x appliance), telling the agent about an argument it never
+  sent. It now says "Nothing you passed is the problem — the endpoint does not exist on this version", two
+  characters shorter, so a skill's 300-character error cap still keeps "Upgrade, or point at a 9.0+ appliance".
+  Found in the 2026-10-24 local conversation round.
+
 ## v1.24.2 — failed calls are isError frames
 
 * **A call `@vmware_tool` audits as failed is now a failed MCP frame (`isError: true`).** Measured 2026-10-18 with a
