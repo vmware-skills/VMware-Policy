@@ -67,6 +67,8 @@ class TestVmwareTool:
         assert rows[0]["status"] == "ok"
 
     def test_error_logged(self, _fresh_singletons):
+        import json
+
         engine = _fresh_singletons
 
         @vmware_tool
@@ -79,6 +81,11 @@ class TestVmwareTool:
         rows = engine.query(limit=10)
         assert len(rows) == 1
         assert rows[0]["status"] == "error"
+        result = json.loads(rows[0]["result"])
+        assert result["error"] == "boom"
+        assert result["exception_type"] == "RuntimeError"
+        assert "traceback" not in result
+        assert "test_decorators.py" not in str(result)
 
     def test_sensitive_params_redacted(self, _fresh_singletons):
         engine = _fresh_singletons

@@ -1,3 +1,7 @@
+## Unreleased — audit error minimization
+
+* Raised MCP tool exceptions still audit as errors, but the row now stores only the scrubbed message and exception class. It no longer persists a traceback containing internal paths or caller data (HLD §8.2).
+
 ## v1.24.3 — a version-floor 404 no longer mentions an id
 
 * **`version_remedy` no longer says "The id you passed is not the problem".** It reached calls that take no id
