@@ -30,7 +30,6 @@ import logging
 import os
 import re
 import time
-import traceback
 from functools import wraps
 from typing import Any
 
@@ -722,13 +721,11 @@ def _record_undo(state: _CallState, result: Any) -> None:
 
 
 def _capture_error(state: _CallState, exc: Exception) -> None:
-    """Record a failed call. Exception text and tracebacks can carry
-    connection strings, credentials, internal paths — sanitize before
-    persisting to the audit row."""
+    """Record a failure without persisting a stack or internal file paths."""
     state.status = "error"
     state.result = {
         "error": sanitize(_redact_secrets_text(str(exc)), 500),
-        "traceback": sanitize(_redact_secrets_text(traceback.format_exc()[-500:]), 500),
+        "exception_type": type(exc).__name__,
     }
 
 
