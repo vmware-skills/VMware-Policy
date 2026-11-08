@@ -28,8 +28,10 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 import threading
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -59,24 +61,55 @@ CREATE TABLE IF NOT EXISTS undo_log (
 _CREATE_INDEX = "CREATE INDEX IF NOT EXISTS idx_undo_status ON undo_log(status)"
 
 
+class UndoStoreUnavailableError(RuntimeError):
+    """The undo database cannot be read or updated; its contents are unknown."""
+
+
 class UndoStore:
     """Append-and-update store for recorded undo descriptors (SQLite/WAL)."""
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         self._path = Path(db_path).expanduser() if db_path else ops_path("undo.db")
         self._ok = False
+        self._init_lock = threading.Lock()
+        self._try_init()
+
+    def _try_init(self) -> bool:
+        """Retry schema creation after a transient initialization/storage failure."""
+        with self._init_lock:
+            if self._ok:
+                return True
+            try:
+                self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                with closing(self._connect()) as conn:
+                    conn.execute(_CREATE_TABLE)
+                    conn.execute(_CREATE_INDEX)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.commit()
+                self._harden()
+                self._ok = True
+            except Exception:
+                self._ok = False
+            return self._ok
+
+    def _require_ready(self) -> None:
+        if not self._try_init():
+            raise UndoStoreUnavailableError(
+                "Undo store unavailable; check OPS_HOME directory permissions and disk space."
+            ) from None
+
+    @staticmethod
+    def _report_lost() -> None:
+        # No raw exception or descriptor: either may contain credentials. stderr
+        # stays visible even when an MCP host has not configured Python logging.
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            conn = self._connect()
-            conn.execute(_CREATE_TABLE)
-            conn.execute(_CREATE_INDEX)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.commit()
-            conn.close()
-            self._harden()
-            self._ok = True
+            sys.stderr.write(
+                "vmware-policy: undo record lost; check OPS_HOME directory permissions "
+                "and disk space. The completed operation has no recorded inverse.\n"
+            )
+            sys.stderr.flush()
         except Exception:
-            _log.warning("Cannot initialize undo DB at %s", self._path, exc_info=True)
+            pass
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._path), timeout=_BUSY_TIMEOUT_MS / 1000)
@@ -111,81 +144,90 @@ class UndoStore:
         ``params``; ``skill`` defaults to the original skill. Never raises —
         recording must not break the underlying tool call.
         """
-        if not self._ok:
-            return None
         if not isinstance(undo_descriptor, dict) or not undo_descriptor.get("tool"):
             _log.debug("undo descriptor for %s.%s missing 'tool' — not recorded", skill, tool)
             return None
+        if not self._try_init():
+            self._report_lost()
+            return None
         undo_id = uuid.uuid4().hex[:16]
         try:
-            conn = self._connect()
-            conn.execute(
-                "INSERT INTO undo_log (undo_id, ts, skill, tool, undo_skill, undo_tool, "
-                "undo_params, orig_params, status, workflow_id, note) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'recorded', ?, ?)",
-                (
-                    undo_id,
-                    datetime.now(tz=timezone.utc).isoformat(),
-                    skill,
-                    tool,
-                    str(undo_descriptor.get("skill", skill)),
-                    str(undo_descriptor["tool"]),
-                    _safe_json(undo_descriptor.get("params", {})),
-                    _safe_json(orig_params or {}),
-                    workflow_id,
-                    str(undo_descriptor.get("note", "")),
-                ),
-            )
-            conn.commit()
-            conn.close()
+            with closing(self._connect()) as conn:
+                conn.execute(
+                    "INSERT INTO undo_log (undo_id, ts, skill, tool, undo_skill, undo_tool, "
+                    "undo_params, orig_params, status, workflow_id, note) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'recorded', ?, ?)",
+                    (
+                        undo_id,
+                        datetime.now(tz=timezone.utc).isoformat(),
+                        skill,
+                        tool,
+                        str(undo_descriptor.get("skill", skill)),
+                        str(undo_descriptor["tool"]),
+                        _safe_json(undo_descriptor.get("params", {})),
+                        _safe_json(orig_params or {}),
+                        workflow_id,
+                        str(undo_descriptor.get("note", "")),
+                    ),
+                )
+                conn.commit()
             return undo_id
         except Exception:
-            _log.warning("Failed to record undo for %s.%s", skill, tool, exc_info=True)
+            self._ok = False
+            self._report_lost()
             return None
 
     def get(self, undo_id: str) -> dict[str, Any] | None:
-        if not self._ok:
-            return None
-        conn = self._connect()
+        self._require_ready()
         try:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT * FROM undo_log WHERE undo_id = ?", (undo_id,)).fetchone()
-            return dict(row) if row else None
-        finally:
-            conn.close()
+            with closing(self._connect()) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM undo_log WHERE undo_id = ?", (undo_id,)
+                ).fetchone()
+                return dict(row) if row else None
+        except sqlite3.Error:
+            self._ok = False
+            raise UndoStoreUnavailableError(
+                "Undo store unavailable; the record could not be read."
+            ) from None
 
     def list(self, *, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        if not self._ok:
-            return []
-        conn = self._connect()
+        self._require_ready()
         try:
-            conn.row_factory = sqlite3.Row
-            if status:
-                rows = conn.execute(
-                    "SELECT * FROM undo_log WHERE status = ? ORDER BY ts DESC LIMIT ?",
-                    (status, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM undo_log ORDER BY ts DESC LIMIT ?", (limit,)
-                ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            conn.close()
+            with closing(self._connect()) as conn:
+                conn.row_factory = sqlite3.Row
+                if status:
+                    rows = conn.execute(
+                        "SELECT * FROM undo_log WHERE status = ? ORDER BY ts DESC LIMIT ?",
+                        (status, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM undo_log ORDER BY ts DESC LIMIT ?", (limit,)
+                    ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.Error:
+            self._ok = False
+            raise UndoStoreUnavailableError(
+                "Undo store unavailable; records could not be read."
+            ) from None
 
     def mark(self, undo_id: str, status: str) -> bool:
         """Update an undo record's status (e.g. 'applied' / 'expired')."""
-        if not self._ok:
-            return False
-        conn = self._connect()
+        self._require_ready()
         try:
-            cur = conn.execute(
-                "UPDATE undo_log SET status = ? WHERE undo_id = ?", (status, undo_id)
-            )
-            conn.commit()
-            return cur.rowcount > 0
-        finally:
-            conn.close()
+            with closing(self._connect()) as conn:
+                cur = conn.execute(
+                    "UPDATE undo_log SET status = ? WHERE undo_id = ?", (status, undo_id)
+                )
+                conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.Error:
+            self._ok = False
+            raise UndoStoreUnavailableError(
+                "Undo store unavailable; status could not be updated."
+            ) from None
 
 
 def _safe_json(obj: Any) -> str:

@@ -25,6 +25,13 @@ def delete_segment(name: str, env: str = "") -> dict:
     ...
 ```
 
+## 撤销记录存储可用性
+
+撤销记录写入失败时，已完成的平台操作仍返回成功，并在 stderr 显示警告。
+存储会在下一次操作时重新尝试初始化，修复目录或磁盘后无需重启进程。
+`vmware-audit undo-list` 和 `undo-show` 会将存储不可用报告为错误，不会显示成空记录。
+返回的 `_undo_id` 才是逆操作已实际记录的证据。
+
 ## 报告工具*返回*的失败
 
 大多数工具用抛异常表示失败，`@vmware_tool` 会记录下来。而捕获异常、返回一个错误载荷的工具，
@@ -58,6 +65,8 @@ vmware-audit log --status denied --since 2026-03-28
 vmware-audit stats --days 7
 vmware-audit policy          # 查看当前生效的规则
 ```
+
+审计 CLI 的 `log --last`、`export --limit`、`undo-list --last` 必须大于 0；零或负值会在访问存储前被拒绝。
 
 ## 核心组件
 

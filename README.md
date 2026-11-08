@@ -26,6 +26,13 @@ def delete_segment(name: str, env: str = "") -> dict:
     ...
 ```
 
+## Undo storage availability
+
+A failed undo recording leaves the completed platform operation successful and prints a warning on stderr.
+The store retries initialization on the next operation, so fixing its directory or disk does not require a
+process restart. `vmware-audit undo-list` and `undo-show` report an unavailable store as an error rather than
+showing it as empty. A returned `_undo_id` is the evidence that an inverse was actually recorded.
+
 ## Reporting a failure the tool *returns*
 
 Most tools signal failure by raising, and `@vmware_tool` records that. A tool that
@@ -64,6 +71,8 @@ vmware-audit log --status denied --since 2026-03-28
 vmware-audit stats --days 7
 vmware-audit policy          # which rules are in force
 ```
+
+The audit CLI requires positive bounds for `log --last`, `export --limit` and `undo-list --last`; zero or negative values are rejected before accessing the store.
 
 ## Components
 
