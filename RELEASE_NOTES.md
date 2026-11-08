@@ -1,5 +1,7 @@
 ## v1.24.4 — audit error minimization and undo-store recovery
 
+* Update public author/project contact metadata to `zhouwei008@gmail.com`.
+
 * `vmware-audit log --last`, `export --limit` and `undo-list --last` reject zero/negative bounds before store access. This prevents false-empty output and SQLite negative-limit exports that read every row.
 * Raised MCP tool exceptions still audit as errors, but the row now stores only the scrubbed message and exception class. It no longer persists a traceback containing internal paths or caller data (HLD §8.2).
 * Undo storage retries initialization after a directory or database failure. Each lost inverse produces a parameter-free stderr warning; a successful platform operation still succeeds. Undo queries and status updates report storage errors explicitly instead of appearing empty, and the CLI renders those failures without a traceback.
@@ -1173,7 +1175,7 @@ Tests: 34 → 52 passing (16 pattern engine + 2 decorator integration).
 - **[READ]/[WRITE] tool prefixes**: All MCP tool descriptions now start with [READ] or [WRITE] to clearly indicate operation type
 - **Read/write split counts**: SKILL.md MCP Tools section header shows exact read vs write tool counts
 - **Negative routing**: Description frontmatter includes "Do NOT use when..." clause to prevent misrouting
-- **Broadcom author attestation**: README.md, README-CN.md, and pyproject.toml include VMware by Broadcom author identity (wei-wz.zhou@broadcom.com) to resolve Snyk E005 brand warnings
+- **Broadcom author attestation**: README.md, README-CN.md, and pyproject.toml include VMware by Broadcom author identity (zhouwei008@gmail.com) to resolve Snyk E005 brand warnings
 
 ### Policy-specific
 
