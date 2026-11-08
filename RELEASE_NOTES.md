@@ -1,5 +1,6 @@
 ## v1.24.4 — audit error minimization and undo-store recovery
 
+* `vmware-audit log --last`, `export --limit` and `undo-list --last` reject zero/negative bounds before store access. This prevents false-empty output and SQLite negative-limit exports that read every row.
 * Raised MCP tool exceptions still audit as errors, but the row now stores only the scrubbed message and exception class. It no longer persists a traceback containing internal paths or caller data (HLD §8.2).
 * Undo storage retries initialization after a directory or database failure. Each lost inverse produces a parameter-free stderr warning; a successful platform operation still succeeds. Undo queries and status updates report storage errors explicitly instead of appearing empty, and the CLI renders those failures without a traceback.
 
