@@ -66,6 +66,8 @@ vmware-audit stats --days 7
 vmware-audit policy          # 查看当前生效的规则
 ```
 
+审计 CLI 的 `log --last`、`export --limit`、`undo-list --last` 必须大于 0；零或负值会在访问存储前被拒绝。
+
 ## 核心组件
 
 | 组件 | 说明 |

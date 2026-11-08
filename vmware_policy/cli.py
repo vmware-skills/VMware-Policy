@@ -57,7 +57,7 @@ console = Console()
 @app.command()
 @cli_local("reads the local audit database")
 def log(
-    last: int = typer.Option(20, help="Number of recent entries to show"),
+    last: int = typer.Option(20, min=1, help="Number of recent entries to show"),
     skill: str | None = typer.Option(None, help="Filter by skill name"),
     tool: str | None = typer.Option(None, help="Filter by tool name"),
     status: str | None = typer.Option(
@@ -130,7 +130,7 @@ def export(
     format: str = typer.Option("json", help="Export format: json"),
     skill: str | None = typer.Option(None, help="Filter by skill"),
     since: str | None = typer.Option(None, help="Export entries after date"),
-    limit: int = typer.Option(10000, help="Max entries to export"),
+    limit: int = typer.Option(10000, min=1, help="Max entries to export"),
     correlation_id: str | None = typer.Option(
         None,
         "--correlation-id",
@@ -181,7 +181,7 @@ def stats(
 @cli_local("lists undo tokens in the local store")
 def undo_list(
     status: str | None = typer.Option(None, help="Filter by status (recorded/applied/expired)"),
-    last: int = typer.Option(20, help="Number of recent undo records to show"),
+    last: int = typer.Option(20, min=1, help="Number of recent undo records to show"),
 ) -> None:
     """List recorded undo tokens (inverse operations for prior writes)."""
     from vmware_policy.undo import UndoStoreUnavailableError, get_undo_store

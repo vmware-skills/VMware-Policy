@@ -72,6 +72,8 @@ vmware-audit stats --days 7
 vmware-audit policy          # which rules are in force
 ```
 
+The audit CLI requires positive bounds for `log --last`, `export --limit` and `undo-list --last`; zero or negative values are rejected before accessing the store.
+
 ## Components
 
 | Component | Description |
