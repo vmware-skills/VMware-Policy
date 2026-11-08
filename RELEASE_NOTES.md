@@ -1,6 +1,7 @@
-## Unreleased — audit error minimization
+## v1.24.4 — audit error minimization and undo-store recovery
 
 * Raised MCP tool exceptions still audit as errors, but the row now stores only the scrubbed message and exception class. It no longer persists a traceback containing internal paths or caller data (HLD §8.2).
+* Undo storage retries initialization after a directory or database failure. Each lost inverse produces a parameter-free stderr warning; a successful platform operation still succeeds. Undo queries and status updates report storage errors explicitly instead of appearing empty, and the CLI renders those failures without a traceback.
 
 ## v1.24.3 — a version-floor 404 no longer mentions an id
 

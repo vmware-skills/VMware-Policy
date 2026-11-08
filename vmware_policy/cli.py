@@ -184,9 +184,13 @@ def undo_list(
     last: int = typer.Option(20, help="Number of recent undo records to show"),
 ) -> None:
     """List recorded undo tokens (inverse operations for prior writes)."""
-    from vmware_policy.undo import get_undo_store
+    from vmware_policy.undo import UndoStoreUnavailableError, get_undo_store
 
-    rows = get_undo_store().list(status=status, limit=last)
+    try:
+        rows = get_undo_store().list(status=status, limit=last)
+    except UndoStoreUnavailableError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
     if not rows:
         console.print("[dim]No undo records found.[/dim]")
         return
@@ -215,9 +219,13 @@ def undo_show(undo_id: str) -> None:
     Prints the inverse tool + params an operator (or vmware-pilot) can replay to
     roll the change back. This command does NOT execute anything.
     """
-    from vmware_policy.undo import get_undo_store
+    from vmware_policy.undo import UndoStoreUnavailableError, get_undo_store
 
-    rec = get_undo_store().get(undo_id)
+    try:
+        rec = get_undo_store().get(undo_id)
+    except UndoStoreUnavailableError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
     if not rec:
         console.print(f"[red]No undo record with id '{undo_id}'.[/red]")
         raise typer.Exit(1)
