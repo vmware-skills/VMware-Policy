@@ -1,22 +1,53 @@
-<!-- mcp-name: io.github.vmware-skills/vmware-policy -->
-
 # VMware Policy
 
-For a read-only check of this skill with your model and agent host, use the shared [model-fit self-test](https://github.com/vmware-skills/marketplace/blob/main/MODEL_FIT_SELF_TEST.md) in the marketplace root.
+[![PyPI](https://img.shields.io/pypi/v/vmware-policy)](https://pypi.org/project/vmware-policy/) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#readme-license)
 
-> **Author**: Wei Zhou, VMware by Broadcom — zhouwei008@gmail.com
-> This is a community-driven project by a VMware engineer, not an official VMware product.
-> For official VMware developer tools see [developer.broadcom.com](https://developer.broadcom.com).
+English | [中文](README-CN.md)
+
+Maintainer: Wei Zhou · [zhouwei008@gmail.com](mailto:zhouwei008@gmail.com)
+
+Community-maintained open-source project; not an official VMware or Broadcom product.
+
+[Overview](#readme-overview) · [Quick Start](#readme-quick-start) · [Library Usage](#readme-library-usage) · [Capabilities and Workflows](#readme-capabilities-and-workflows) · [Safety and Audit](#readme-safety-and-audit) · [Troubleshooting](#readme-troubleshooting) · [Companion Skills](#readme-companion-skills) · [Reference](#readme-reference) · [License](#readme-license)
+
+<a id="readme-overview"></a>
+
+## Overview
+
+Shared library; does not provide a standalone MCP server.
 
 Unified audit logging, policy enforcement, and sanitization for the VMware MCP skill family.
 
-## Install
+<a id="readme-quick-start"></a>
+
+## Quick Start
+
+Requires Python `>=3.10` and `uv`.
+
+```bash
+uv tool install vmware-policy==1.24.4
+vmware-audit --help
+```
+
+<details>
+<summary>Installation and configuration details (including offline setup)</summary>
+
+### Install
 
 ```bash
 pip install vmware-policy
 ```
 
-## Usage
+
+</details>
+
+<a id="readme-library-usage"></a>
+
+## Library Usage
+
+Policy is a shared dependency of the VMware tools; do not create a standalone MCP marketplace entry for it.
+
+### Usage
 
 ```python
 from vmware_policy import vmware_tool
@@ -26,14 +57,18 @@ def delete_segment(name: str, env: str = "") -> dict:
     ...
 ```
 
-## Undo storage availability
+<a id="readme-capabilities-and-workflows"></a>
+
+## Capabilities and Workflows
+
+### Undo storage availability
 
 A failed undo recording leaves the completed platform operation successful and prints a warning on stderr.
 The store retries initialization on the next operation, so fixing its directory or disk does not require a
 process restart. `vmware-audit undo-list` and `undo-show` report an unavailable store as an error rather than
 showing it as empty. A returned `_undo_id` is the evidence that an inverse was actually recorded.
 
-## Reporting a failure the tool *returns*
+### Reporting a failure the tool *returns*
 
 Most tools signal failure by raising, and `@vmware_tool` records that. A tool that
 instead catches the exception and returns an error payload looks identical to a
@@ -63,7 +98,7 @@ Strings are deliberately not sniffed: skills that return console output can emit
 text beginning with "Error:" as *data*, and marking those calls failed would be
 the same misreport in the opposite direction.
 
-## CLI
+### CLI
 
 ```bash
 vmware-audit log --last 20
@@ -74,7 +109,7 @@ vmware-audit policy          # which rules are in force
 
 The audit CLI requires positive bounds for `log --last`, `export --limit` and `undo-list --last`; zero or negative values are rejected before accessing the store.
 
-## Components
+### Components
 
 | Component | Description |
 |-----------|-------------|
@@ -84,20 +119,7 @@ The audit CLI requires positive bounds for `log --last`, `export --limit` and `u
 | `sanitize()` | Prompt-injection defense -- strips C0/C1 control and Unicode format characters, truncates (default 500 chars) |
 | `vmware-audit` | Typer CLI -- query, export, statistics, rule status |
 
-## Architecture
-
-```
-AI Agent -> vmware-pilot (optional orchestration) -> @vmware_tool pre-check -> skill operation -> audit row -> ~/.vmware/audit.db
-```
-
-vmware-policy is a **mandatory dependency** of every VMware skill. It provides:
-
-- **Audit logging**: calls to MCP tools wrapped by `@vmware_tool` are recorded in the unified database `~/.vmware/audit.db`
-- **Policy engine**: deny rules and maintenance window, hot-reloaded without a restart (change limits are a reserved field and not enforced)
-- **Input sanitization**: all text from the vSphere/NSX/Aria APIs passes through `sanitize()`
-- **AI agent detection**: records the caller from its environment: `claude`, `codex`, `deerflow`, `local` (an Ollama host) or `unknown`
-
-## Policy rules
+### Policy rules
 
 Read/write authorization belongs to the vCenter/NSX account's RBAC. The policy
 engine only adds the operator's own deny rules and maintenance window, from
@@ -145,7 +167,7 @@ change_limits:
 
 Rule changes hot-reload; no service needs a restart.
 
-## Tool exposure
+### Tool exposure
 
 Every skill's MCP server can offer a subset of its tools. `<cli> mcp --expose read` (or
 `VMWARE_<SKILL>_MCP_EXPOSE=read`) keeps only tools annotated `readOnlyHint: true`; `--allow-write a,b`
@@ -173,7 +195,7 @@ the exposure hides.
 This limits what clients are offered. It is not authorization: the account's permissions decide what a call may
 change, and deny rules still apply to every exposed tool.
 
-## Serving MCP over HTTPS
+### Serving MCP over HTTPS
 
 `vmware_policy.serve` runs a skill's MCP server on stdio (default), on HTTPS, or on loopback HTTP behind a
 TLS-terminating reverse proxy. Both network transports require bearer tokens; nothing binds without one.
@@ -210,7 +232,7 @@ vmware-audit token revoke alice      # running servers refuse it from the next r
 - **Every caller of an endpoint acts with that server's account.** Tokens identify callers; they authorize nothing
   at the platform. Run one endpoint per privilege level and per group of people who may see each other's work.
 
-## Roles for network callers
+### Roles for network callers
 
 Several people or agents can share one HTTPS endpoint with different jobs (vmware-policy ≥ 1.24.0, HLD §18).
 A role limits which tools and targets a token may use **on that endpoint**. It narrows what the server's account
@@ -274,7 +296,7 @@ vmware-audit roles check                       # exit 1 if a role or token canno
   credentials, or an agent with its own shell and network path to vCenter, is outside them. For a team that must
   never write, a read-only account on its own endpoint is still the stronger answer.
 
-## Session pools
+### Session pools
 
 A skill that connects to a platform can keep a small pool of sessions per target
 (`vmware_policy.pool.SessionPool`, `VMWARE_MCP_POOL_SIZE`, default 2) and start its server with
@@ -285,7 +307,7 @@ target's pool is busy it gets a temporary extra session, so multi-target calls c
 longer than 300 s for a session gets an error naming the target. Each session is a login on the target. stdio and
 the CLI keep one cached session per target, separate from the pooled ones.
 
-## Access self-diagnosis
+### Access self-diagnosis
 
 `vmware_policy.access.vsphere_access_info(si, target=, requirements=, tool=)` backs each vSphere skill's
 `get_access_info` tool: the account the target uses, the privileges each tool needs (from the skill's
@@ -293,7 +315,7 @@ requirements table) and whether the current session holds them on the root folde
 (`AuthorizationManager.HasPrivilegeOnEntities`, which needs only System.View). "Not granted at the root" is not
 "no access": permissions on specific objects are not covered. A lookup that fails is `undetermined`, never granted.
 
-## Risk levels
+### Risk levels
 
 The level a tool declares is recorded in the audit row, can be matched by a
 deny rule's `min_risk_level`, and decides whether a configured maintenance
@@ -306,7 +328,30 @@ window applies. It does not by itself gate execution.
 | `high` | power off, migrate, snapshot revert |
 | `critical` | delete VM, delete cluster |
 
-## VMware Skill Family
+<a id="readme-safety-and-audit"></a>
+
+## Safety and Audit
+
+### Security
+
+- The audit database (`~/.vmware/audit.db`, local only, `0700` directory / `0600` files) records tool parameters, results, status, OS user and inferred agent -- treat it and its archives as sensitive.
+- Parameters named in `sensitive_params` are stored as `***`; results from tools declaring `sensitive_result=True` are replaced; credential-named keys (`password`, `token`, `kubeconfig`, ...) in parameters and results, and credential-shaped text in error messages, are redacted on both the MCP and CLI surfaces. A credential under a key name not on that list must be declared in `sensitive_params`.
+- `sanitize()` guards against prompt injection through API response text.
+- Policy bypass (`VMWARE_POLICY_DISABLED=1`) skips policy checks, not auditing.
+
+<a id="readme-troubleshooting"></a>
+
+## Troubleshooting
+
+For installation issues, see the installation instructions on this page. Check CLI arguments with `--help` before operating. Include only a minimal, redacted example when reporting a problem.
+
+<a id="readme-companion-skills"></a>
+
+## Companion Skills
+
+The VMware Skills family contains 14 MCP servers and the shared Policy library. Choose tools by responsibility: [vmware-skills](https://github.com/vmware-skills).
+
+### VMware Skill Family
 
 | Skill | Scope | Install |
 |-------|-------|---------|
@@ -326,14 +371,28 @@ window applies. It does not by itself gate execution.
 | **vmware-pilot** | Multi-step workflow orchestration | `uv tool install vmware-pilot` |
 | **vmware-policy** | Audit + policy (this package) | `uv tool install vmware-policy` |
 
-## Security
+<a id="readme-reference"></a>
 
-- The audit database (`~/.vmware/audit.db`, local only, `0700` directory / `0600` files) records tool parameters, results, status, OS user and inferred agent -- treat it and its archives as sensitive.
-- Parameters named in `sensitive_params` are stored as `***`; results from tools declaring `sensitive_result=True` are replaced; credential-named keys (`password`, `token`, `kubeconfig`, ...) in parameters and results, and credential-shaped text in error messages, are redacted on both the MCP and CLI surfaces. A credential under a key name not on that list must be declared in `sensitive_params`.
-- `sanitize()` guards against prompt injection through API response text.
-- Policy bypass (`VMWARE_POLICY_DISABLED=1`) skips policy checks, not auditing.
+## Reference
 
-## Development
+Release history: [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+Read-only self-test with your own model and agent host: [model-fit self-test](https://github.com/vmware-skills/marketplace/blob/main/MODEL_FIT_SELF_TEST.md).
+
+### Architecture
+
+```
+AI Agent -> vmware-pilot (optional orchestration) -> @vmware_tool pre-check -> skill operation -> audit row -> ~/.vmware/audit.db
+```
+
+vmware-policy is a **mandatory dependency** of every VMware skill. It provides:
+
+- **Audit logging**: calls to MCP tools wrapped by `@vmware_tool` are recorded in the unified database `~/.vmware/audit.db`
+- **Policy engine**: deny rules and maintenance window, hot-reloaded without a restart (change limits are a reserved field and not enforced)
+- **Input sanitization**: all text from the vSphere/NSX/Aria APIs passes through `sanitize()`
+- **AI agent detection**: records the caller from its environment: `claude`, `codex`, `deerflow`, `local` (an Ollama host) or `unknown`
+
+### Development
 
 ```bash
 git clone https://github.com/vmware-skills/VMware-Policy.git
@@ -342,6 +401,8 @@ uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 pytest --cov=vmware_policy
 ```
+
+<a id="readme-license"></a>
 
 ## License
 
