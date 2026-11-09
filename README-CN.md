@@ -1,21 +1,53 @@
-<!-- mcp-name: io.github.vmware-skills/vmware-policy -->
 # VMware Policy
 
-要用自己的模型和 Agent 平台进行只读自测，请看 marketplace 根目录的[共享模型适配自测任务](https://github.com/vmware-skills/marketplace/blob/main/MODEL_FIT_SELF_TEST.md)。
+[![PyPI](https://img.shields.io/pypi/v/vmware-policy)](https://pypi.org/project/vmware-policy/) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#readme-license)
 
-> **作者**: Wei Zhou, VMware by Broadcom — zhouwei008@gmail.com
-> 本项目由 VMware 工程师维护的社区项目，非 VMware 官方产品。
-> VMware 官方开发者工具请访问 [developer.broadcom.com](https://developer.broadcom.com)。
+[English](README.md) | 中文
+
+维护者: Wei Zhou · [zhouwei008@gmail.com](mailto:zhouwei008@gmail.com)
+
+社区维护的开源项目，非 VMware 或 Broadcom 官方产品。
+
+[概述](#readme-overview) · [快速开始](#readme-quick-start) · [库的使用](#readme-library-usage) · [能力与工作流](#readme-capabilities-and-workflows) · [安全与审计](#readme-safety-and-audit) · [故障排查](#readme-troubleshooting) · [配套 Skills](#readme-companion-skills) · [参考资料](#readme-reference) · [许可证](#readme-license)
+
+<a id="readme-overview"></a>
+
+## 概述
+
+共享库，不提供独立 MCP Server。
 
 VMware MCP 技能家族的统一审计日志、策略执行与输入消毒基础设施层。
 
-## 安装
+<a id="readme-quick-start"></a>
+
+## 快速开始
+
+需要 Python `>=3.10` 和 `uv`。
+
+```bash
+uv tool install vmware-policy==1.24.4
+vmware-audit --help
+```
+
+<details>
+<summary>安装与配置详情（含离线安装）</summary>
+
+### 安装
 
 ```bash
 pip install vmware-policy
 ```
 
-## 使用方法
+
+</details>
+
+<a id="readme-library-usage"></a>
+
+## 库的使用
+
+Policy 随其他 VMware 工具作为共享依赖使用，不要为它创建独立 MCP 市场条目。
+
+### 使用方法
 
 ```python
 from vmware_policy import vmware_tool
@@ -25,14 +57,18 @@ def delete_segment(name: str, env: str = "") -> dict:
     ...
 ```
 
-## 撤销记录存储可用性
+<a id="readme-capabilities-and-workflows"></a>
+
+## 能力与工作流
+
+### 撤销记录存储可用性
 
 撤销记录写入失败时，已完成的平台操作仍返回成功，并在 stderr 显示警告。
 存储会在下一次操作时重新尝试初始化，修复目录或磁盘后无需重启进程。
 `vmware-audit undo-list` 和 `undo-show` 会将存储不可用报告为错误，不会显示成空记录。
 返回的 `_undo_id` 才是逆操作已实际记录的证据。
 
-## 报告工具*返回*的失败
+### 报告工具*返回*的失败
 
 大多数工具用抛异常表示失败，`@vmware_tool` 会记录下来。而捕获异常、返回一个错误载荷的工具，
 看起来和一次成功调用一模一样——很长时间里它也确实被记成了成功，这同时意味着会为从未发生的变更
@@ -57,7 +93,7 @@ except Exception as exc:
 字符串是刻意不去嗅探的：返回控制台输出的 skill 可能把以 "Error:" 开头的文本当作*数据*输出，
 把这些调用标为失败，就是方向相反的同一种误报。
 
-## CLI 命令
+### CLI 命令
 
 ```bash
 vmware-audit log --last 20
@@ -68,7 +104,7 @@ vmware-audit policy          # 查看当前生效的规则
 
 审计 CLI 的 `log --last`、`export --limit`、`undo-list --last` 必须大于 0；零或负值会在访问存储前被拒绝。
 
-## 核心组件
+### 核心组件
 
 | 组件 | 说明 |
 |------|------|
@@ -78,20 +114,7 @@ vmware-audit policy          # 查看当前生效的规则
 | `sanitize()` | 提示注入防御 -- 清理 C0/C1 控制字符与 Unicode 格式字符后截断（默认 500 字符） |
 | `vmware-audit` | Typer CLI -- 查询审计日志、导出 JSON、统计分析、查看规则状态 |
 
-## 架构
-
-```
-AI Agent -> vmware-pilot（按需编排）-> @vmware_tool 前置检查 -> skill 操作 -> 写一条审计记录 -> ~/.vmware/audit.db
-```
-
-vmware-policy 是所有 VMware 技能的**强制依赖**，提供：
-
-- **审计日志**：经 `@vmware_tool` 包裹的 MCP 工具，其调用记录写入统一数据库 `~/.vmware/audit.db`
-- **策略引擎**：deny 规则、维护窗口，热加载无需重启（变更限制为预留字段，不强制执行）
-- **输入消毒**：所有来自 vSphere/NSX/Aria API 的文本经过 `sanitize()` 处理
-- **AI Agent 检测**：根据环境变量记录调用方：`claude`、`codex`、`deerflow`、`local`（Ollama 主机）或 `unknown`
-
-## 策略规则配置
+### 策略规则配置
 
 读写授权由 vCenter/NSX 账号的 RBAC 决定。策略引擎只在其上叠加运维人员自己写的
 拒绝规则和维护窗口，规则文件为 `~/.vmware/rules.yaml`（设置了 `$OPS_HOME` 时为
@@ -136,7 +159,7 @@ change_limits:
 
 规则修改后自动热加载，无需重启任何服务。
 
-## 工具暴露范围
+### 工具暴露范围
 
 每个 skill 的 MCP server 都可以只提供一部分工具。`<cli> mcp --expose read`（或环境变量
 `VMWARE_<SKILL>_MCP_EXPOSE=read`）只保留标注了 `readOnlyHint: true` 的工具；`--allow-write a,b`（或
@@ -160,7 +183,7 @@ mcp.run(transport="streamable-http")
 
 这只决定向客户端提供哪些工具，**不是授权**：一次调用能改什么由账号权限决定，deny 规则对所有暴露出来的工具照样生效。
 
-## 通过 HTTPS 提供 MCP
+### 通过 HTTPS 提供 MCP
 
 `vmware_policy.serve` 可以让 skill 的 MCP server 跑在 stdio（默认）、HTTPS，或者跑在本机 HTTP 上、由前面负责 TLS 的
 反向代理转发。两种网络方式都必须先有 bearer token，没有 token 就不会绑定端口。
@@ -194,7 +217,7 @@ vmware-audit token revoke alice      # 正在运行的 server 从下一个请求
 - **同一个端点的所有调用者都以该 server 的账号执行操作。** token 用来识别调用者，在平台上不授予任何权限。按权限等级、
   按可以互相看到工作内容的人群，各开一个端点。
 
-## 网络调用者的角色
+### 网络调用者的角色
 
 多个人或 agent 可以按不同职责共用一个 HTTPS 端点（vmware-policy ≥ 1.24.0，HLD §18）。角色限定某个 token 在**这个端点上**
 能用哪些工具和 target。它只能收窄 server 账号的用途，不能超出账号本身的权限，平台账号仍然是边界。
@@ -248,7 +271,7 @@ vmware-audit roles check                       # 有不可用的角色或 token 
 - **角色只能区分只通过这个端点访问平台的人。** 持有账号凭据的人，或自己有 shell 并且网络能直达 vCenter 的 agent，
   都不在角色的约束之内。某个团队绝对不能写，最可靠的做法仍是给它一个只读账号、单独一个端点。
 
-## 会话池
+### 会话池
 
 连接平台的 skill 可以为每个 target 维护一个小的会话池（`vmware_policy.pool.SessionPool`，`VMWARE_MCP_POOL_SIZE`，
 默认 2），并用 `run_server(..., pooled=True)` 启动 server。通过网络方式访问时，每个调用在整个执行过程中独占自己在每个 target 上的会话
@@ -257,14 +280,14 @@ vmware-audit roles check                       # 有不可用的角色或 token 
 的调用不会死锁。等会话超过 300 秒的调用会收到一条写明 target 的错误。每个会话都是 target 上的一次登录。stdio 和 CLI
 仍然每个 target 缓存一个会话，与池里的会话分开。
 
-## 权限自诊断
+### 权限自诊断
 
 `vmware_policy.access.vsphere_access_info(si, target=, requirements=, tool=)` 是各 vSphere skill 的 `get_access_info`
 工具的实现：target 使用哪个账号、每个工具需要哪些权限（来自 skill 的需求表），以及当前会话在根文件夹上是否持有这些
 权限（`AuthorizationManager.HasPrivilegeOnEntities`，只需要 System.View）。"根上未授予"不等于"没有权限"：具体对象
 上的授权不在检查范围内。查询失败记为 `undetermined`，绝不当作已授予。
 
-## 风险等级
+### 风险等级
 
 工具声明的等级会写入审计行，可被 deny 规则的 `min_risk_level` 匹配，并决定已配置的
 维护窗口是否适用。等级本身不会拦截执行。
@@ -276,7 +299,30 @@ vmware-audit roles check                       # 有不可用的角色或 token 
 | `high` | power off、migrate、snapshot revert |
 | `critical` | delete VM、delete cluster |
 
-## VMware 技能家族
+<a id="readme-safety-and-audit"></a>
+
+## 安全与审计
+
+### 安全
+
+- 审计数据库（`~/.vmware/audit.db`，仅本地，目录 `0700` / 文件 `0600`）记录工具参数、结果、状态、操作系统用户和推断的 agent -- 请将其及归档视为敏感数据
+- `sensitive_params` 中列出的参数存为 `***`；声明了 `sensitive_result=True` 的工具，其结果整体替换；参数和结果中的凭据类键名（`password`、`token`、`kubeconfig` 等）以及报错文本中的凭据样式内容，在 MCP 和 CLI 两条路径上都会被脱敏。键名不在该列表中的凭据必须在 `sensitive_params` 中声明
+- `sanitize()` 防止通过 API 响应文本进行提示注入
+- 策略旁路（`VMWARE_POLICY_DISABLED=1`）只跳过策略检查，不跳过审计
+
+<a id="readme-troubleshooting"></a>
+
+## 故障排查
+
+安装问题请查看本页安装说明；操作前先用 CLI 的 `--help` 核对参数。反馈问题时仅提供经过脱敏的最小示例。
+
+<a id="readme-companion-skills"></a>
+
+## 配套 Skills
+
+VMware Skills 家族包含 14 个 MCP Server 和共享 Policy 库。按职责选择工具： [vmware-skills](https://github.com/vmware-skills).
+
+### VMware 技能家族
 
 | 技能 | 定位 | 安装命令 |
 |------|------|---------|
@@ -296,14 +342,28 @@ vmware-audit roles check                       # 有不可用的角色或 token 
 | **vmware-pilot** | 多步骤工作流编排 | `uv tool install vmware-pilot` |
 | **vmware-policy** | 审计 + 策略（本包） | `uv tool install vmware-policy` |
 
-## 安全
+<a id="readme-reference"></a>
 
-- 审计数据库（`~/.vmware/audit.db`，仅本地，目录 `0700` / 文件 `0600`）记录工具参数、结果、状态、操作系统用户和推断的 agent -- 请将其及归档视为敏感数据
-- `sensitive_params` 中列出的参数存为 `***`；声明了 `sensitive_result=True` 的工具，其结果整体替换；参数和结果中的凭据类键名（`password`、`token`、`kubeconfig` 等）以及报错文本中的凭据样式内容，在 MCP 和 CLI 两条路径上都会被脱敏。键名不在该列表中的凭据必须在 `sensitive_params` 中声明
-- `sanitize()` 防止通过 API 响应文本进行提示注入
-- 策略旁路（`VMWARE_POLICY_DISABLED=1`）只跳过策略检查，不跳过审计
+## 参考资料
 
-## 开发
+变更记录： [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+使用自己的模型和 Agent 宿主进行只读自测： [model-fit self-test](https://github.com/vmware-skills/marketplace/blob/main/MODEL_FIT_SELF_TEST.md).
+
+### 架构
+
+```
+AI Agent -> vmware-pilot（按需编排）-> @vmware_tool 前置检查 -> skill 操作 -> 写一条审计记录 -> ~/.vmware/audit.db
+```
+
+vmware-policy 是所有 VMware 技能的**强制依赖**，提供：
+
+- **审计日志**：经 `@vmware_tool` 包裹的 MCP 工具，其调用记录写入统一数据库 `~/.vmware/audit.db`
+- **策略引擎**：deny 规则、维护窗口，热加载无需重启（变更限制为预留字段，不强制执行）
+- **输入消毒**：所有来自 vSphere/NSX/Aria API 的文本经过 `sanitize()` 处理
+- **AI Agent 检测**：根据环境变量记录调用方：`claude`、`codex`、`deerflow`、`local`（Ollama 主机）或 `unknown`
+
+### 开发
 
 ```bash
 git clone https://github.com/vmware-skills/VMware-Policy.git
@@ -312,6 +372,8 @@ uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 pytest --cov=vmware_policy
 ```
+
+<a id="readme-license"></a>
 
 ## 许可证
 
