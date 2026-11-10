@@ -25,7 +25,7 @@ VMware MCP 技能家族的统一审计日志、策略执行与输入消毒基础
 需要 Python `>=3.10` 和 `uv`。
 
 ```bash
-uv tool install vmware-policy==1.24.4
+uv tool install vmware-policy==1.25.0
 vmware-audit --help
 ```
 
@@ -35,7 +35,7 @@ vmware-audit --help
 ### 安装
 
 ```bash
-pip install vmware-policy
+pip install vmware-policy==1.25.0
 ```
 
 
@@ -110,7 +110,7 @@ vmware-audit policy          # 查看当前生效的规则
 |------|------|
 | `@vmware_tool` | 装饰器 -- 包裹技能的 MCP 工具，负责策略前置检查 + 执行 + 写一条审计记录 |
 | `AuditEngine` | 基于 SQLite WAL 的追加式审计日志引擎，支持日志轮转（100MB 阈值，保留 5 个归档） |
-| `PolicyEngine` | 基于 YAML 的规则引擎：拒绝规则、维护窗口，文件变更时自动热加载。`change_limits` 为预留字段，不强制执行 |
+| `PolicyEngine` | 基于 YAML 的规则引擎：拒绝规则、维护窗口，文件变更时自动热加载。`change_limits` 根据后端读取的当前状态约束 AIops VM CPU/内存调整 |
 | `sanitize()` | 提示注入防御 -- 清理 C0/C1 控制字符与 Unicode 格式字符后截断（默认 500 字符） |
 | `vmware-audit` | Typer CLI -- 查询审计日志、导出 JSON、统计分析、查看规则状态 |
 
@@ -150,8 +150,8 @@ maintenance_window:
   start: "22:00"
   end: "06:00"
 
-# 变更限制 -- 预留字段，当前不强制执行（引擎无前置状态计算增量，
-# 配置后仅记录一条 "未强制执行" 的警告）
+# 仅约束 AIops VM CPU/内存调整：相对真实当前配置的绝对变化百分比
+# 同时约束增减，需使用已接入后端检查的新版本 AIops。
 change_limits:
   max_cpu_change_pct: 20
   max_memory_change_pct: 50
@@ -340,7 +340,7 @@ VMware Skills 家族包含 14 个 MCP Server 和共享 Policy 库。按职责选
 | **vmware-debug** | 故障关联 / 根因 | `uv tool install vmware-debug` |
 | **vmware-log-insight** | 集中日志检索 | `uv tool install vmware-log-insight` |
 | **vmware-pilot** | 多步骤工作流编排 | `uv tool install vmware-pilot` |
-| **vmware-policy** | 审计 + 策略（本包） | `uv tool install vmware-policy` |
+| **vmware-policy** | 审计 + 策略（本包） | `uv tool install vmware-policy==1.25.0` |
 
 <a id="readme-reference"></a>
 
@@ -366,7 +366,7 @@ vmware-policy 是所有 VMware 技能的**强制依赖**，提供：
 ### 开发
 
 ```bash
-git clone https://github.com/vmware-skills/VMware-Policy.git
+git clone --branch v1.25.0 https://github.com/vmware-skills/VMware-Policy.git
 cd VMware-Policy
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
@@ -378,3 +378,18 @@ pytest --cov=vmware_policy
 ## 许可证
 
 MIT
+
+### VM 配置调整限额
+
+Policy 1.25.0 与 AIops 2.5.0 在后端提交任务前强制检查 CPU/内存变更百分比。
+例如 CPU 4→8 变化 100%，4→3 变化 25%，均会被 20% 上限拒绝；恰好等于上限
+则允许。检查范围内的配置调整遇到无效或未知限额、缺少当前配置或
+`changeVersion` 时拒绝执行。ConfigSpec 绑定该版本，防止并发变更使比较基数
+过期。调用方提供的百分比不可信；通用 `check_allowed(params=...)` 只做入口授权，
+不代替后端状态检查。初始创建/克隆任务、存储及其他产品不在范围内；经该后端进行的部署后扩缩容仍会检查。旧版 AIops
+不执行此限制，依赖该保护前必须升级两个包。并发拒绝已有合成契约测试，
+尚待正向真机验证。
+
+通过同一后端进行的部署后扩缩容仍会检查限额。拒绝时，新建 VM 可能已经存在，
+且保持原始规格；重试前应先查看结果。最初的创建/克隆任务本身不执行百分比
+限额检查，本轮不引入自动删除或重复克隆。

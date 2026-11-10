@@ -40,7 +40,7 @@ Unified audit logging, policy enforcement, and input sanitization -- the infrast
 ## Quick Install
 
 ```bash
-uv tool install vmware-policy==1.24.4
+uv tool install vmware-policy==1.25.0
 vmware-audit stats          # verify installation
 ```
 
@@ -217,7 +217,7 @@ Multiple concurrent skill processes can write to the same audit.db via WAL mode.
 ## Setup
 
 ```bash
-uv tool install vmware-policy==1.24.4
+uv tool install vmware-policy==1.25.0
 mkdir -p ~/.vmware
 ```
 
@@ -240,3 +240,7 @@ mkdir -p ~/.vmware
 ## License
 
 MIT -- [github.com/vmware-skills/VMware-Policy](https://github.com/vmware-skills/VMware-Policy)
+
+## Current evidence boundary
+
+CPU/memory change_limits are enforced at the updated AIops reconfiguration backend, including decreases, using actual VM state and changeVersion. Generic parameter checks cannot prove a resize percentage. Scope and required package versions: `references/capabilities.md`.

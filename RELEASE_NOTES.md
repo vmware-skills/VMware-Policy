@@ -6,6 +6,14 @@
 * Raised MCP tool exceptions still audit as errors, but the row now stores only the scrubbed message and exception class. It no longer persists a traceback containing internal paths or caller data (HLD §8.2).
 * Undo storage retries initialization after a directory or database failure. Each lost inverse produces a parameter-free stderr warning; a successful platform operation still succeeds. Undo queries and status updates report storage errors explicitly instead of appearing empty, and the CLI renders those failures without a traceback.
 
+## v1.25.0 (2026-11-10) — Enforce VM resize limits from backend state
+
+Implement CPU/memory percentage limits for the updated AIops backend using actual current sizing and configuration-version binding; malformed limits or required missing evidence fail closed. Isolate audit failure signals and credential redaction while preserving shared state and import aliases. Generic caller parameters do not establish a resize percentage; initial creation/clone tasks and other products are outside this scope; post-deployment resizing through this backend remains checked.
+
+Validation: existing suites, complete CLI/MCP surface comparison, structural guard checks and security scanning; exact results are retained in the private release record. Live 9.1/Supervisor, PAIS, NSX and Horizon validation is not established by synthetic tests.
+
+中文：本轮修复和重构范围见上述说明；保留既有 Policy、审计及确认门。合成测试不代表 9.1/Supervisor、PAIS、NSX 或 Horizon 正向真机验证。
+
 ## v1.24.3 — a version-floor 404 no longer mentions an id
 
 * **`version_remedy` no longer says "The id you passed is not the problem".** It reached calls that take no id

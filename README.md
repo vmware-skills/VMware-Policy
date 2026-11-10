@@ -25,7 +25,7 @@ Unified audit logging, policy enforcement, and sanitization for the VMware MCP s
 Requires Python `>=3.10` and `uv`.
 
 ```bash
-uv tool install vmware-policy==1.24.4
+uv tool install vmware-policy==1.25.0
 vmware-audit --help
 ```
 
@@ -35,7 +35,7 @@ vmware-audit --help
 ### Install
 
 ```bash
-pip install vmware-policy
+pip install vmware-policy==1.25.0
 ```
 
 
@@ -115,7 +115,7 @@ The audit CLI requires positive bounds for `log --last`, `export --limit` and `u
 |-----------|-------------|
 | `@vmware_tool` | Decorator around a skill's MCP tools -- policy pre-check + execute + audit row |
 | `AuditEngine` | Append-only SQLite (WAL) audit log; rotates at 100 MB, keeps 5 archives |
-| `PolicyEngine` | YAML rules: deny rules and maintenance window, hot-reloaded on file change. `change_limits` is reserved and not enforced. |
+| `PolicyEngine` | YAML rules: deny rules and maintenance window, hot-reloaded on file change. `change_limits` bounds AIops VM CPU/memory reconfiguration using backend-read state. |
 | `sanitize()` | Prompt-injection defense -- strips C0/C1 control and Unicode format characters, truncates (default 500 chars) |
 | `vmware-audit` | Typer CLI -- query, export, statistics, rule status |
 
@@ -158,8 +158,8 @@ maintenance_window:
   start: "22:00"
   end: "06:00"
 
-# Change limits -- reserved field, not enforced today (the engine has no prior
-# state to compute a delta from; configuring it only logs a "not enforced" warning)
+# AIops VM CPU/memory reconfiguration only: absolute percentage change
+# from actual current sizing (increases and decreases). Requires updated AIops.
 change_limits:
   max_cpu_change_pct: 20
   max_memory_change_pct: 50
@@ -369,7 +369,7 @@ The VMware Skills family contains 14 MCP servers and the shared Policy library. 
 | **vmware-debug** | Incident correlation / root cause | `uv tool install vmware-debug` |
 | **vmware-log-insight** | Centralized log search | `uv tool install vmware-log-insight` |
 | **vmware-pilot** | Multi-step workflow orchestration | `uv tool install vmware-pilot` |
-| **vmware-policy** | Audit + policy (this package) | `uv tool install vmware-policy` |
+| **vmware-policy** | Audit + policy (this package) | `uv tool install vmware-policy==1.25.0` |
 
 <a id="readme-reference"></a>
 
@@ -388,14 +388,14 @@ AI Agent -> vmware-pilot (optional orchestration) -> @vmware_tool pre-check -> s
 vmware-policy is a **mandatory dependency** of every VMware skill. It provides:
 
 - **Audit logging**: calls to MCP tools wrapped by `@vmware_tool` are recorded in the unified database `~/.vmware/audit.db`
-- **Policy engine**: deny rules and maintenance window, hot-reloaded without a restart (change limits are a reserved field and not enforced)
+- **Policy engine**: deny rules and maintenance window, hot-reloaded without a restart (AIops VM reconfiguration limits use actual before-state)
 - **Input sanitization**: all text from the vSphere/NSX/Aria APIs passes through `sanitize()`
 - **AI agent detection**: records the caller from its environment: `claude`, `codex`, `deerflow`, `local` (an Ollama host) or `unknown`
 
 ### Development
 
 ```bash
-git clone https://github.com/vmware-skills/VMware-Policy.git
+git clone --branch v1.25.0 https://github.com/vmware-skills/VMware-Policy.git
 cd VMware-Policy
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
@@ -407,3 +407,22 @@ pytest --cov=vmware_policy
 ## License
 
 MIT
+
+### VM reconfiguration limits
+
+Policy 1.25.0 and AIops 2.5.0 enforce the configured CPU/memory percentages at
+the backend mutation boundary. For example, CPU 4 to 8 is a 100% change and is
+refused under a 20% maximum; a 4 to 3 decrease is 25% and is also refused. The
+exact boundary is allowed. Malformed/unknown limits, missing sizing or missing
+`changeVersion` fail closed for the checked reconfiguration. The ConfigSpec is
+bound to that version to reject concurrent changes. A caller-supplied percentage
+is not trusted. Generic `check_allowed(params=...)` is surface authorization,
+not this backend state check. Initial create/clone tasks, storage and other products are
+outside this scope; post-deployment resizing through the backend is checked. Older AIops versions do not enforce these limits; upgrade
+both packages before relying on them. Concurrent rejection has synthetic
+contract coverage; positive appliance validation is still pending.
+
+A post-deployment resize through the same backend is still checked. Its refusal
+can leave a newly created VM at its original sizing; inspect the result before
+retrying. The initial create/clone task itself is not a percentage-limit gate,
+and no automatic cleanup or clone retry is introduced.

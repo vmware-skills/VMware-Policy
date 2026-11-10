@@ -408,15 +408,9 @@ class PolicyEngine:
                     reason=f"High-risk operations only allowed during {window.get('start', '?')}-{window.get('end', '?')}",
                 )
 
-        # ── Evaluate change limits (reserved, not implemented) ────────
-        # change_limits is NOT an enforced feature: _check_limits only warns
-        # that configured limits are ignored (it can't compute deltas without
-        # before-state). Kept so misconfiguration is surfaced, not silent.
-        limits = self._rules.get("change_limits", {})
-        if params and limits:
-            result = self._check_limits(limits, params, operation)
-            if result and not result.allowed:
-                return result
+        # Percentage limits need backend-read state. AIops enforces them at
+        # its final reconfiguration boundary through check_vm_reconfiguration.
+        # A percentage supplied in params is not authoritative before-state.
 
         # Read/write authorization beyond the operator's own deny rules is the
         # vCenter/NSX account's job (RBAC, HLD §1/§5). The v1.8 "require the
@@ -570,24 +564,29 @@ class PolicyEngine:
         # Wraps midnight (e.g. 22:00 - 06:00)
         return current_minutes >= start_minutes or current_minutes <= end_minutes
 
-    @staticmethod
-    def _check_limits(
-        limits: dict[str, Any], params: dict[str, Any], operation: str
-    ) -> PolicyResult | None:
-        """Check parameter-based limits (e.g. max CPU change %).
+    @_locked
+    def check_vm_reconfiguration(
+        self, *, before: dict[str, Any], after: dict[str, Any], change_version: str | None,
+    ) -> PolicyResult:
+        """Additional backend gate for AIops CPU/memory changes, not caller claims.
 
-        NOTE: Not yet implemented — requires before-state to compute deltas.
-        Logs a warning when limits are configured so operators know they are
-        not being enforced.
+        Call after resolving the VM and before submitting a ConfigSpec bound to
+        the same changeVersion. Surface authorization/audit still runs normally.
         """
-        if limits:
-            _log.warning(
-                "change_limits configured for '%s' but limit enforcement is not yet "
-                "implemented — limits are NOT being enforced. Params: %s",
-                operation,
-                list(params.keys()),
-            )
-        return None
+        if os.environ.get("VMWARE_POLICY_DISABLED") == "1":
+            return PolicyResult(allowed=True, rule="policy_disabled")
+        self._maybe_reload()
+        if self._load_error is not None:
+            return PolicyResult(allowed=False, rule="rules_unreadable", reason=self._load_error)
+        from vmware_policy._change_limits import check_vm_change
+
+        limits = self._rules.get("change_limits")
+        reason = check_vm_change(limits, before, after, change_version)
+        if reason:
+            return PolicyResult(allowed=False, rule="change_limits", reason=reason)
+        fields = {"cpu": "max_cpu_change_pct", "memory_mb": "max_memory_change_pct"}
+        bound = isinstance(limits, dict) and any(k in after and v in limits for k, v in fields.items())
+        return PolicyResult(allowed=True, rule="change_limits" if bound else "default_allow")
 
 
 # ── Singleton ─────────────────────────────────────────────────────────
