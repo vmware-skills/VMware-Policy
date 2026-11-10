@@ -99,7 +99,7 @@ A user file replaces the baseline; they are never merged. An empty loaded rule s
 |-----------|-------|--------|
 | **deny** | Block specific operations | Operation rejected with reason |
 | **maintenance_window** | Time-based restriction (UTC) | High/critical ops blocked outside window; a malformed window blocks them always |
-| **change_limits** | Parameter thresholds | Reserved -- not enforced (logs a warning if configured) |
+| **change_limits** | AIops VM CPU/memory reconfiguration | Backend checks absolute percentage changes against current sizing and binds changeVersion |
 
 ### Rules YAML Schema
 
@@ -117,9 +117,9 @@ maintenance_window:
   start: "HH:MM"               # Window start (24h format)
   end: "HH:MM"                 # Window end (wraps midnight)
 
-change_limits:                  # Reserved -- not enforced; configuring these
-  max_cpu_change_pct: <int>     # only emits a "NOT enforced" warning (the
-  max_memory_change_pct: <int>  # engine has no before-state to compute deltas)
+change_limits:                  # Policy 1.25.0 + AIops 2.5.0 backend required
+  max_cpu_change_pct: <number>  # finite, nonnegative; increases and decreases
+  max_memory_change_pct: <number> # same, from current memory MB
 ```
 
 ### Rule Evaluation Order
@@ -128,7 +128,7 @@ change_limits:                  # Reserved -- not enforced; configuring these
 2. Maintenance window -- high/critical ops restricted to window hours
 3. Default -- allow
 
-(change_limits is reserved and not enforced -- see the Rule Types table.)
+After surface authorization, the AIops backend checks configured limits using actual VM state before ReconfigVM_Task. Missing required state/version or malformed limits refuse the change. Other operations/products are outside this scope; caller-supplied percentages are not authoritative.
 
 ### Hot-Reload
 
@@ -234,3 +234,9 @@ itself gate execution.
 | `medium` | reconfigure, update settings |
 | `high` | power off, migrate, snapshot revert |
 | `critical` | delete VM, delete cluster, delete security policy |
+
+## Maintenance safety boundary
+
+CPU/memory change_limits are enforced at the updated AIops reconfiguration backend, including decreases, using actual VM state and changeVersion. Generic parameter checks cannot prove a resize percentage. Scope and required package versions: `references/capabilities.md`.
+
+Post-deployment resizing through the same backend is checked too; refusal can leave the created VM at its original size. Inspect the result before retrying. No automatic cleanup or clone replay is performed.

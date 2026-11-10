@@ -48,9 +48,10 @@
 #   start: "22:00"
 #   end: "06:00"
 
-# ── Change limits (reserved, NOT enforced) ────────────────────────────
-# Parsed but not enforced: the engine has no before-state to compute deltas
-# against, so configuring this only emits a "NOT enforced" warning.
+# ── AIops VM reconfiguration limits ──────────────────────────────────
+# Absolute percentage change from backend-read CPU/memory sizing, including
+# decreases. Requires the updated AIops backend and VM changeVersion.
+# Other operations/products are outside this limit scope.
 #
 # change_limits:
 #   max_cpu_change_pct: 20

@@ -1415,7 +1415,7 @@ wheels = [
 
 [[package]]
 name = "vmware-policy"
-version = "1.24.4"
+version = "1.25.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
