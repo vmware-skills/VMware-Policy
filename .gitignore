@@ -41,3 +41,6 @@ Thumbs.db
 
 # Build artifacts
 mcp-publisher
+
+# Ignore a local environment whether it is a directory or symlink.
+/.venv
