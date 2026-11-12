@@ -1,5 +1,7 @@
 # VMware-Policy
 
+<a id="readme-overview"></a>
+
 Use shared policy checks and audit evidence across the VMware Skills family.
 
 English · [简体中文](README-CN.md)
@@ -10,11 +12,15 @@ Community-maintained · MIT · Not an official VMware/Broadcom product.
 
 Synthetic-data animation, not a live recording. [Watch the AI-narrated family introduction (~2 min)](https://github.com/vmware-skills/marketplace/blob/main/assets/demos/vmware-skills-en.mp4)
 
+<a id="readme-capabilities-and-workflows"></a>
+
 ## Why use it?
 
 - Apply shared policy and risk metadata to tool calls.
 - Query audit records with the vmware-audit CLI.
 - Sanitize external text and retain execution boundaries.
+
+<a id="readme-quick-start"></a>
 
 ## Get started
 
@@ -29,9 +35,13 @@ Requires uv and Python >=3.10. Keep configuration and audit data locally; compan
 
 For Claude Code and other host installation paths, see the [family portal](https://github.com/vmware-skills/marketplace).
 
+<a id="readme-safety-and-audit"></a>
+
 ## Know the boundaries
 
 A shared dependency library and CLI, not a standalone MCP server. Local policy does not replace VMware RBAC or provide independent human approval.
+
+<a id="readme-mcp-configuration"></a> <a id="readme-troubleshooting"></a> <a id="readme-reference"></a>
 
 ## Go deeper
 
@@ -41,6 +51,10 @@ A shared dependency library and CLI, not a standalone MCP server. Local policy d
 - [Detailed usage and architecture](skills/vmware-policy/references/detailed-guide.md)
 - [Canonical skill instructions](skills/vmware-policy/SKILL.md)
 
+<a id="readme-companion-skills"></a>
+
 Part of [VMware Skills](https://github.com/vmware-skills/marketplace): 15 skills, 14 MCP servers and one shared Policy library. If it helps your work, star the family portal.
+
+<a id="readme-license"></a>
 
 [Issues and feedback](https://github.com/vmware-skills/VMware-Policy/issues) · [MIT](https://opensource.org/license/mit/)
