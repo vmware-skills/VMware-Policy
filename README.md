@@ -8,7 +8,7 @@ Community-maintained · MIT · Not an official VMware/Broadcom product.
 
 [![18-second illustrative investigation demo](https://raw.githubusercontent.com/vmware-skills/marketplace/main/assets/demos/vmware-skills-en.gif)](https://github.com/vmware-skills/marketplace/blob/main/assets/demos/vmware-skills-en.mp4)
 
-Synthetic-data animation, not a live recording. [Watch the narrated family introduction (~2 min)](https://github.com/vmware-skills/marketplace/blob/main/assets/demos/vmware-skills-en.mp4)
+Synthetic-data animation, not a live recording. [Watch the AI-narrated family introduction (~2 min)](https://github.com/vmware-skills/marketplace/blob/main/assets/demos/vmware-skills-en.mp4)
 
 ## Why use it?
 
@@ -25,7 +25,7 @@ uv tool install vmware-policy==1.25.0
 vmware-audit --help
 ```
 
-Requires uv and Python >=3.10. Configure targets and credentials locally before remote queries. [Setup guide](skills/vmware-policy/references/setup-guide.md).
+Requires uv and Python >=3.10. Keep configuration and audit data locally; companion modules use their own target configuration. [Setup guide](skills/vmware-policy/references/setup-guide.md).
 
 For Claude Code and other host installation paths, see the [family portal](https://github.com/vmware-skills/marketplace).
 
@@ -43,4 +43,4 @@ A shared dependency library and CLI, not a standalone MCP server. Local policy d
 
 Part of [VMware Skills](https://github.com/vmware-skills/marketplace): 15 skills, 14 MCP servers and one shared Policy library. If it helps your work, star the family portal.
 
-[Issues and feedback](https://github.com/vmware-skills/VMware-Policy/issues) · [MIT](LICENSE)
+[Issues and feedback](https://github.com/vmware-skills/VMware-Policy/issues) · [MIT](https://opensource.org/license/mit/)
