@@ -4,13 +4,13 @@
 
 在 VMware Skills 家族中共享策略检查与审计证据。
 
-[English](README.md) · 简体中文
+[English](https://github.com/vmware-skills/VMware-Policy/blob/main/README.md) · 简体中文
 
 社区维护 · MIT 开源 · 非 VMware/Broadcom 官方产品。
 
-[![18 秒调查示意演示](https://raw.githubusercontent.com/vmware-skills/marketplace/main/assets/demos/vmware-skills-zh.gif)](https://github.com/vmware-skills/marketplace/blob/main/assets/demos/vmware-skills-zh.mp4)
+[![18 秒调查示意演示](https://raw.githubusercontent.com/vmware-skills/marketplace/main/assets/demos/vmware-skills-zh.gif)](https://github.com/vmware-skills/marketplace/releases/download/demos-2026-11-12/vmware-skills-zh.mp4)
 
-使用合成数据的示意动画，非实时录屏。[观看家族 AI 配音介绍（约 2 分钟）](https://github.com/vmware-skills/marketplace/blob/main/assets/demos/vmware-skills-zh.mp4)
+GIF 使用合成数据；视频包含脱敏的历史截图。[下载家族 AI 配音介绍（约 2 分钟）](https://github.com/vmware-skills/marketplace/releases/download/demos-2026-11-12/vmware-skills-zh.mp4)
 
 <a id="readme-capabilities-and-workflows"></a>
 
@@ -31,9 +31,9 @@ uv tool install vmware-policy==1.25.0
 vmware-audit --help
 ```
 
-需要 uv 与 Python >=3.10。配置与审计数据保存在本机，其他模块按各自目标配置连接。[配置指南](skills/vmware-policy/references/setup-guide.md)。
+需要 uv 与 Python >=3.10。配置与审计数据保存在本机，其他模块按各自目标配置连接。[配置指南](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/setup-guide.md)。
 
-Claude Code 及其他宿主安装方式见[家族门户](https://github.com/vmware-skills/marketplace/blob/main/README-CN.md)。
+共享库集成与审计 CLI 安装见[配置指南](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/setup-guide.md)；Policy 没有独立 MCP server。
 
 <a id="readme-safety-and-audit"></a>
 
@@ -45,11 +45,11 @@ Claude Code 及其他宿主安装方式见[家族门户](https://github.com/vmwa
 
 ## 详细文档
 
-- [能力范围](skills/vmware-policy/references/capabilities.md)
-- [CLI 用法](skills/vmware-policy/references/cli-reference.md)
-- [Agent 使用约束](skills/vmware-policy/references/agent-guardrails.md)
-- [详细用法与架构](skills/vmware-policy/references/detailed-guide-CN.md)
-- [唯一技能指令正本](skills/vmware-policy/SKILL.md)
+- [能力范围](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/capabilities.md)
+- [CLI 用法](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/cli-reference.md)
+- [Agent 使用约束](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/agent-guardrails.md)
+- [详细用法与架构](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/detailed-guide-CN.md)
+- [唯一技能指令正本](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/SKILL.md)
 
 <a id="readme-companion-skills"></a>
 
