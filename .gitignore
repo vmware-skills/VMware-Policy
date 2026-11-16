@@ -44,3 +44,7 @@ mcp-publisher
 
 # Ignore a local environment whether it is a directory or symlink.
 /.venv
+
+# Design and planning documents stay out of the public repo and the sdist.
+docs/plans/
+design/

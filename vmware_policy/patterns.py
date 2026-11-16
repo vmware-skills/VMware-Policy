@@ -1,7 +1,6 @@
 """L5 auto-remediation pattern engine.
 
-Implements the pattern matcher described in
-``docs/auto-remediation-patterns.md``. Patterns are loaded from
+Implements the L5 pattern matcher. Patterns are loaded from
 ``~/.vmware/auto-remediation-patterns/*.yaml`` (hot-reload on mtime change)
 and consulted by the ``@vmware_tool`` decorator on every call.
 
