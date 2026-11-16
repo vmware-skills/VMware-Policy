@@ -10,7 +10,6 @@ Usage:
     python -m scripts.extract_patterns --days 30
     python -m scripts.extract_patterns --min-runs 10
 
-Design doc: docs/auto-remediation-patterns.md
 """
 
 from __future__ import annotations
