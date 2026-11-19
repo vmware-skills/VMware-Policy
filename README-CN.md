@@ -27,7 +27,7 @@ GIF 使用合成数据；视频包含脱敏的历史截图。[下载家族 AI �
 安装已发布 CLI，并查看可用命令：
 
 ```sh
-uv tool install vmware-policy==1.25.0
+uv tool install vmware-policy==1.26.0
 vmware-audit --help
 ```
 
@@ -60,3 +60,8 @@ vmware-audit --help
 <a id="readme-license"></a>
 
 [问题与反馈](https://github.com/vmware-skills/VMware-Policy/issues) · [MIT](https://opensource.org/license/mit/)
+
+
+## MCP 公共结果契约
+
+Policy 1.26.0 在保留旧文本和成功值的同时提供统一结构化错误视图。支持 offset 的客户端以 `next_offset` 判断翻页结束，不以 `truncated` 循环。详见[契约与发布顺序](skills/vmware-policy/references/mcp-result-contract-CN.md)。

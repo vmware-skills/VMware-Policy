@@ -27,7 +27,7 @@ Unified audit logging, policy enforcement, and sanitization for the VMware MCP s
 Requires Python `>=3.10` and `uv`.
 
 ```bash
-uv tool install vmware-policy==1.25.0
+uv tool install vmware-policy==1.26.0
 vmware-audit --help
 ```
 
@@ -37,7 +37,7 @@ vmware-audit --help
 ### Install
 
 ```bash
-pip install vmware-policy==1.25.0
+pip install vmware-policy==1.26.0
 ```
 
 
@@ -371,7 +371,7 @@ The VMware Skills family contains 14 MCP servers and the shared Policy library. 
 | **vmware-debug** | Incident correlation / root cause | `uv tool install vmware-debug` |
 | **vmware-log-insight** | Centralized log search | `uv tool install vmware-log-insight` |
 | **vmware-pilot** | Multi-step workflow orchestration | `uv tool install vmware-pilot` |
-| **vmware-policy** | Audit + policy (this package) | `uv tool install vmware-policy==1.25.0` |
+| **vmware-policy** | Audit + policy (this package) | `uv tool install vmware-policy==1.26.0` |
 
 <a id="readme-reference"></a>
 
@@ -397,7 +397,7 @@ vmware-policy is a **mandatory dependency** of every VMware skill. It provides:
 ### Development
 
 ```bash
-git clone --branch v1.25.0 https://github.com/vmware-skills/VMware-Policy.git
+git clone --branch v1.26.0 https://github.com/vmware-skills/VMware-Policy.git
 cd VMware-Policy
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
