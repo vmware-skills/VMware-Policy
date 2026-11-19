@@ -64,4 +64,4 @@ Part of [VMware Skills](https://github.com/vmware-skills/marketplace): 15 skills
 
 ## Shared MCP result contracts
 
-Policy 1.26.0 adds a common structured error view while preserving legacy text and success values. Offset-capable clients terminate on `next_offset`, not `truncated`. See the [contract and rollout notes](skills/vmware-policy/references/mcp-result-contract.md).
+Policy 1.26.0 adds a common structured error view while preserving legacy text and success values. Offset-capable clients terminate on `next_offset`, not `truncated`. See the [contract and rollout notes](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/mcp-result-contract.md).

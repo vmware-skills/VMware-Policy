@@ -64,4 +64,4 @@ vmware-audit --help
 
 ## MCP 公共结果契约
 
-Policy 1.26.0 在保留旧文本和成功值的同时提供统一结构化错误视图。支持 offset 的客户端以 `next_offset` 判断翻页结束，不以 `truncated` 循环。详见[契约与发布顺序](skills/vmware-policy/references/mcp-result-contract-CN.md)。
+Policy 1.26.0 在保留旧文本和成功值的同时提供统一结构化错误视图。支持 offset 的客户端以 `next_offset` 判断翻页结束，不以 `truncated` 循环。详见[契约与发布顺序](https://github.com/vmware-skills/VMware-Policy/blob/main/skills/vmware-policy/references/mcp-result-contract-CN.md)。

@@ -101,7 +101,7 @@ def test_policy_denial_stays_denied_and_never_reaches_body(tmp_path, monkeypatch
     home.mkdir()
     (home / "rules.yaml").write_text(
         'deny:\n  - name: block-test-delete\n    operations: [delete_probe]\n'
-        '    reason: "Test denial"\n'
+        '    reason: "Test denial"\n', encoding="utf-8"
     )
     monkeypatch.setenv("OPS_HOME", str(home))
     reset_engine()
