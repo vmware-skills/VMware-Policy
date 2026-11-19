@@ -1,10 +1,10 @@
-## Unreleased — Policy 1.26.0 shared result contracts
+## v1.26.0 (2026-11-19) — Compatible MCP result contracts
 
 - Failed MCP calls add `structuredContent.vmware_error` with string `error` and nullable `hint`, retaining legacy text and structured business fields. SDK ToolError frames use the same view; success/preview values, Python tool returns, cancellation and audit/Policy behavior remain unchanged.
 - Export `page_envelope` and `next_offset` for offset-capable tools. Keep the six existing list fields; add explicit offset/continuation metadata without inventing pagination on non-offset tools.
 - Dependent skill migrations follow this library release. VDI/PrivateAI retain their legacy truncated semantics and add only next_offset in this stage.
 
-中文：失败帧新增统一错误视图，保留旧文本、业务字段、成功/预览结果与安全机制；提供公共分页 helper。先发布共享库再迁移组件，VDI/PrivateAI 本阶段保留旧 truncated 语义并增加 next_offset。尚未发布。
+中文：失败帧新增统一错误视图，保留旧文本、业务字段、成功/预览结果与安全机制；提供公共分页 helper。先发布共享库再迁移组件，VDI/PrivateAI 本阶段保留旧 truncated 语义并增加 next_offset。
 
 ## v1.24.4 — audit error minimization and undo-store recovery
 
