@@ -27,7 +27,7 @@ VMware MCP 技能家族的统一审计日志、策略执行与输入消毒基础
 需要 Python `>=3.10` 和 `uv`。
 
 ```bash
-uv tool install vmware-policy==1.25.0
+uv tool install vmware-policy==1.26.0
 vmware-audit --help
 ```
 
@@ -37,7 +37,7 @@ vmware-audit --help
 ### 安装
 
 ```bash
-pip install vmware-policy==1.25.0
+pip install vmware-policy==1.26.0
 ```
 
 
@@ -342,7 +342,7 @@ VMware Skills 家族包含 14 个 MCP Server 和共享 Policy 库。按职责选
 | **vmware-debug** | 故障关联 / 根因 | `uv tool install vmware-debug` |
 | **vmware-log-insight** | 集中日志检索 | `uv tool install vmware-log-insight` |
 | **vmware-pilot** | 多步骤工作流编排 | `uv tool install vmware-pilot` |
-| **vmware-policy** | 审计 + 策略（本包） | `uv tool install vmware-policy==1.25.0` |
+| **vmware-policy** | 审计 + 策略（本包） | `uv tool install vmware-policy==1.26.0` |
 
 <a id="readme-reference"></a>
 
@@ -368,7 +368,7 @@ vmware-policy 是所有 VMware 技能的**强制依赖**，提供：
 ### 开发
 
 ```bash
-git clone --branch v1.25.0 https://github.com/vmware-skills/VMware-Policy.git
+git clone --branch v1.26.0 https://github.com/vmware-skills/VMware-Policy.git
 cd VMware-Policy
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"

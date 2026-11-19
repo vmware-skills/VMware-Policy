@@ -27,7 +27,7 @@ Synthetic-data GIF; video includes redacted historical screenshots. [Download th
 Install the published CLI and inspect its commands:
 
 ```sh
-uv tool install vmware-policy==1.25.0
+uv tool install vmware-policy==1.26.0
 vmware-audit --help
 ```
 
@@ -60,3 +60,8 @@ Part of [VMware Skills](https://github.com/vmware-skills/marketplace): 15 skills
 <a id="readme-license"></a>
 
 [Issues and feedback](https://github.com/vmware-skills/VMware-Policy/issues) · [MIT](https://opensource.org/license/mit/)
+
+
+## Shared MCP result contracts
+
+Policy 1.26.0 adds a common structured error view while preserving legacy text and success values. Offset-capable clients terminate on `next_offset`, not `truncated`. See the [contract and rollout notes](skills/vmware-policy/references/mcp-result-contract.md).

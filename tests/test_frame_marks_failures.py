@@ -128,7 +128,10 @@ def test_the_content_is_unchanged(ops_home):
     marked = _call(_server(), "envelope")
     assert plain.isError is False
     assert _text(marked) == _text(plain)
-    assert marked.structuredContent == plain.structuredContent
+    assert marked.structuredContent == {
+        **(plain.structuredContent or {}),
+        "vmware_error": {"error": "VM 'x' not found", "hint": "list VMs"},
+    }
 
 
 @pytest.mark.unit

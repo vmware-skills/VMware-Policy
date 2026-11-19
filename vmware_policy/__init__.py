@@ -1,6 +1,6 @@
 """VMware Policy — unified audit, policy enforcement, and sanitization for VMware MCP skills."""
 
-__version__ = "1.25.0"
+__version__ = "1.26.0"
 
 from vmware_policy.audit import AuditEngine, get_engine
 from vmware_policy.budget import BudgetExceeded, BudgetTracker, get_budget
@@ -16,7 +16,7 @@ from vmware_policy.toolschema import (
     enforce_declared_parameters,
     parse_args_section,
 )
-from vmware_policy.envelope import ENVELOPE_KEYS, paginated
+from vmware_policy.envelope import ENVELOPE_KEYS, next_offset, page_envelope, paginated
 from vmware_policy.skills import skill_name
 from vmware_policy.environment import (
     mtime_cached_loader,
@@ -45,6 +45,8 @@ __all__ = [
     "report_tool_failure",
     "sanitize",
     "paginated",
+    "page_envelope",
+    "next_offset",
     "ENVELOPE_KEYS",
     "mtime_cached_loader",
     "set_environment_resolver",
